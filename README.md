@@ -4,7 +4,7 @@
 ![Support](https://img.shields.io/badge/Support-Magisk%20%7C%20KernelSU-blue)
 ![Android Requirement](https://img.shields.io/badge/Android-7.0%2B-orange)
 
-EZ-Clean模块下载地址:[EZ-Clean]https://github.com/045200/EZ-Clean/releases
+EZ-Clean模块下载地址:[EZ-Clean](https://github.com/045200/EZ-Clean/releases)
 
 ## 项目介绍
 EZ-Clean 是一款专为 **Root 后的 Android 设备**设计的智能清理工具，支持通过 **Magisk**（通用 Root 框架）和 **KernelSU**（内核级 Root 框架）以模块形式安装。  
