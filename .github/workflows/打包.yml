@@ -1,54 +1,82 @@
-# 工作流名称：CI打包并发布EZ-Clean版本
-name: EZ-Clean-Package-Release
+# 工作流名称：手动触发EZ-Clean打包发布
+name: EZ-Clean-Manual-Release
 
-# 触发条件：1.main分支推送/PR 2.v开头Tag推送（如v1.0.0）3.手动触发
+# 触发条件：仅支持在GitHub Actions页面手动触发（可自定义输入版本号）
 on:
-  push:
-    branches: [ "main" ]
-    tags: [ "v*" ]  # 仅匹配v开头的Tag（如v1.0.0、v2.1.3）
-  pull_request:
-    branches: [ "main" ]
-  workflow_dispatch:  # 支持在Actions页面手动触发
+  workflow_dispatch:
+    inputs:
+      # 手动触发时需输入的版本号（如v1.0.1，用户自行确保唯一性）
+      release_version:
+        description: '输入发布版本号（格式：v+数字，例：v1.0.1）'
+        required: true
+        default: 'v1.0.0'  # 默认版本号（可修改）
+        type: string
 
 jobs:
-  # 唯一任务：打包代码并发布（Tag触发时生成Release）
-  build-and-publish:
-    runs-on: ubuntu-latest  # 使用最新Ubuntu环境
+  manual-build-and-release:
+    runs-on: ubuntu-latest
     steps:
-      # 步骤1：拉取仓库代码（必须配置fetch-depth:0以获取Tag信息）
-      - name: 拉取仓库代码（含Tag历史）
+      # 步骤1：拉取仓库最新代码（含完整历史，确保Tag操作正常）
+      - name: 拉取仓库代码
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # 关键配置：拉取完整仓库历史，确保能识别Tag
+          fetch-depth: 0
 
-      # 步骤2：打包仓库内容为EZ-Clean.zip（排除冗余目录）
+      # 步骤2：检查输入的版本号格式（确保以v开头，避免无效Tag）
+      - name: 验证版本号格式
+        run: |
+          if ! [[ ${{ github.event.inputs.release_version }} =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "错误：版本号格式不正确！需符合 v主版本.次版本.修订号（例：v1.0.1）"
+            exit 1  # 格式错误时终止工作流
+          fi
+          echo "版本号格式验证通过：${{ github.event.inputs.release_version }}"
+
+      # 步骤3：检查该版本号的Tag是否已存在（避免重复发布）
+      - name: 检查Tag是否已存在
+        run: |
+          TAG=${{ github.event.inputs.release_version }}
+          if git rev-parse --verify --quiet $TAG; then
+            echo "错误：Tag $TAG 已存在！请更换版本号（如v1.0.2）"
+            exit 1  # Tag重复时终止工作流
+          fi
+          echo "Tag $TAG 不存在，可正常创建"
+
+      # 步骤4：创建并推送自定义版本的Tag（基于输入的版本号）
+      - name: 创建并推送Tag
+        run: |
+          TAG=${{ github.event.inputs.release_version }}
+          # 创建带注释的Tag（注释包含触发时间，便于追溯）
+          git tag -a $TAG -m "EZ-Clean手动发布 $TAG（触发时间：$(date +'%Y-%m-%d %H:%M:%S')）"
+          # 推送Tag到远程仓库
+          git push origin $TAG
+          echo "Tag $TAG 已创建并推送成功"
+
+      # 步骤5：打包仓库内容为EZ-Clean.zip（排除冗余目录）
       - name: 打包为EZ-Clean.zip
         run: |
-          cd $GITHUB_WORKSPACE  # 进入仓库根目录
-          # 压缩所有内容为EZ-Clean.zip，排除.git（版本文件）、.github（工作流配置）、node_modules（依赖，按需保留/删除）
-          zip -r EZ-Clean.zip . -x ".git/*" ".github/*" "node_modules/*"
+          cd $GITHUB_WORKSPACE
+          zip -r EZ-Clean.zip . -x ".git/*" ".github/*" "node_modules/*"  # 按需增删排除目录
+          echo "ZIP包打包完成：EZ-Clean.zip"
 
-      # 步骤3：仅Tag触发时，创建GitHub Release（非Tag触发时跳过）
-      - name: 创建GitHub Release（仅Tag推送时执行）
-        if: startsWith(github.ref, 'refs/tags/')  # 条件：仅当触发源是Tag时执行
+      # 步骤6：创建GitHub Release（关联手动输入的版本号）
+      - name: 创建GitHub Release
         uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # 仓库默认Token，无需额外配置
-        id: create_release  # 定义ID，供后续上传步骤引用
+        id: create_release
         with:
-          tag_name: ${{ github.ref_name }}  # Release标签 = 推送的Git Tag（如v1.0.0）
-          release_name: EZ-Clean-${{ github.ref_name }}  # Release名称（如EZ-Clean-v1.0.0）
-          draft: false  # 直接发布，不存为草稿
-          prerelease: false  # 标记为正式版本（需预发布则改为true）
+          tag_name: ${{ github.event.inputs.release_version }}  # 用手动输入的版本号作为Tag
+          release_name: EZ-Clean-${{ github.event.inputs.release_version }}  # Release名称
+          draft: false  # 直接发布（如需草稿，改为true）
+          prerelease: false  # 正式版本（如需预发布，改为true）
 
-      # 步骤4：仅Tag触发时，将EZ-Clean.zip上传到Release资产
-      - name: 上传EZ-Clean.zip到Release（仅Tag推送时执行）
-        if: startsWith(github.ref, 'refs/tags/')  # 与步骤3共享条件
+      # 步骤7：将EZ-Clean.zip上传到Release资产
+      - name: 上传ZIP包到Release
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}  # 关联步骤3创建的Release
-          asset_path: ${{ github.workspace }}/EZ-Clean.zip  # 本地打包好的ZIP路径
-          asset_name: EZ-Clean.zip  # 显示在Release上的文件名
-          asset_content_type: application/zip  # 文件类型（固定为zip格式）
+          upload_url: ${{ steps.create_release.outputs.upload_url }}  # 关联创建的Release
+          asset_path: ${{ github.workspace }}/EZ-Clean.zip  # 本地ZIP包路径
+          asset_name: EZ-Clean.zip  # Release上显示的文件名
+          asset_content_type: application/zip  # 文件类型（固定为ZIP）
