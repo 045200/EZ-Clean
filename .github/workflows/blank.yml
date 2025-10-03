@@ -1,0 +1,50 @@
+name: CI-Package-Release
+
+# 触发条件：main分支推送/PR + 打Tag推送（如v1.0.0）
+on:
+  push:
+    branches: [ "main" ]
+    tags: [ 'v*' ]  # 打v开头的Tag（如v1.0.0）时触发版本发布
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      # 1. 拉取仓库代码（含Tag信息）
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 确保拉取完整历史，包含Tag
+
+      # 2. 打包仓库内容为EZ-Clean.zip（排除冗余目录）
+      - name: 打包为EZ-Clean.zip
+        run: |
+          cd $GITHUB_WORKSPACE
+          zip -r EZ-Clean.zip . -x ".git/*" ".github/*" "node_modules/*"  # 可按需增删排除目录
+
+      # 3. 仅当触发源是Tag时，创建GitHub Release并上传ZIP包
+      - name: 创建GitHub Release（仅Tag触发）
+        if: startsWith(github.ref, 'refs/tags/')  # 仅Tag推送时执行此步骤
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # 仓库默认Token，无需额外配置
+        id: create_release
+        with:
+          tag_name: ${{ github.ref_name }}  # Release标签=Git Tag（如v1.0.0）
+          release_name: EZ-Clean-${{ github.ref_name }}  # Release名称（如EZ-Clean-v1.0.0）
+          draft: false  # 非草稿，直接发布
+          prerelease: false  # 非预发布（需预发布则改为true）
+
+      # 4. 上传EZ-Clean.zip到Release资产（仅Tag触发）
+      - name: 上传ZIP到Release（仅Tag触发）
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}  # 关联上一步创建的Release
+          asset_path: ${{ github.workspace }}/EZ-Clean.zip  # 本地ZIP路径
+          asset_name: EZ-Clean.zip  # 上传到Release的文件名
+          asset_content_type: application/zip  # 文件类型
