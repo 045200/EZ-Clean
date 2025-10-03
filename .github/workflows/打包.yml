@@ -1,82 +1,111 @@
-# 工作流名称：手动触发EZ-Clean打包发布（已修复Git身份错误）
-name: EZ-Clean-Manual-Release
+# 工作流名称：EZ-Clean自动+手动发布（自动版本递增）
+name: EZ-Clean-Auto-Manual-Release
 
-# 仅支持手动触发，需输入版本号
+# 触发条件：1.main分支推送（自动发布） 2.手动触发（自定义版本）
 on:
-  workflow_dispatch:
+  push:
+    branches: [ "main" ]  # main分支有新提交时，自动触发并递增版本
+  workflow_dispatch:      # 手动触发时，可自定义版本号
     inputs:
       release_version:
-        description: '输入发布版本号（格式：v+数字，例：v1.0.1）'
+        description: '手动输入版本号（格式：vX.Y.Z，例：v1.1.0）'
         required: true
         default: 'v1.0.0'
         type: string
 
 jobs:
-  manual-build-and-release:
+  build-and-release:
     runs-on: ubuntu-latest
     steps:
-      # 步骤1：拉取仓库代码
+      # 步骤1：拉取仓库代码（含完整Tag历史，用于自动版本解析）
       - name: 拉取仓库代码
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # 步骤2：验证版本号格式
-      - name: 验证版本号格式
-        run: |
-          if ! [[ ${{ github.event.inputs.release_version }} =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "错误：版本号格式不正确！需符合 v主版本.次版本.修订号（例：v1.0.1）"
-            exit 1
-          fi
-          echo "版本号格式验证通过：${{ github.event.inputs.release_version }}"
-
-      # 步骤3：检查Tag是否已存在
-      - name: 检查Tag是否已存在
-        run: |
-          TAG=${{ github.event.inputs.release_version }}
-          if git rev-parse --verify --quiet $TAG; then
-            echo "错误：Tag $TAG 已存在！请更换版本号（如v1.0.2）"
-            exit 1
-          fi
-          echo "Tag $TAG 不存在，可正常创建"
-
-      # 【新增】步骤4：配置Git提交者身份（解决身份未知错误）
+      # 步骤2：配置Git身份（解决Committer unknown错误）
       - name: 配置Git全局身份
         run: |
-          # 使用GitHub Actions默认的Actor信息（仓库操作人）作为Git身份
           git config --global user.name "${{ github.actor }}"
           git config --global user.email "${{ github.actor }}@users.noreply.github.com"
-          echo "Git身份配置完成：用户名=${{ github.actor }}，邮箱=${{ github.actor }}@users.noreply.github.com"
+          echo "Git身份配置完成"
 
-      # 步骤5：创建并推送Tag（现在身份已配置，不会报错）
+      # 步骤3：区分触发类型，处理版本号（自动递增/手动输入）
+      - name: 自动递增版本号（仅main分支推送触发）
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        id: auto_version
+        run: |
+          # 1. 获取仓库最新Tag（无Tag时默认v1.0.0）
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v1.0.0")
+          echo "当前最新Tag：$LATEST_TAG"
+
+          # 2. 解析版本号（提取X.Y.Z，如v1.0.0→1 0 0）
+          VERSION_PARTS=(${LATEST_TAG//./ })
+          MAJOR=${VERSION_PARTS[0]#v}  # 主版本（如1）
+          MINOR=${VERSION_PARTS[1]}     # 次版本（如0）
+          PATCH=${VERSION_PARTS[2]}     # 修订号（如0）
+
+          # 3. 自动递增修订号（如v1.0.0→v1.0.1，v1.2.3→v1.2.4）
+          NEW_PATCH=$((PATCH + 1))
+          NEW_TAG="v$MAJOR.$MINOR.$NEW_PATCH"
+          echo "自动生成新Tag：$NEW_TAG"
+
+          # 4. 存入环境变量，供后续步骤使用
+          echo "NEW_TAG=$NEW_TAG" >> $GITHUB_ENV
+
+      # 步骤4：验证手动输入版本号（仅手动触发时执行）
+      - name: 验证手动版本号（仅手动触发）
+        if: github.event_name == 'workflow_dispatch'
+        id: manual_version
+        run: |
+          MANUAL_TAG=${{ github.event.inputs.release_version }}
+          # 验证格式（必须是vX.Y.Z）
+          if ! [[ $MANUAL_TAG =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "错误：版本号格式无效！需符合v主版本.次版本.修订号（例：v1.0.1）"
+            exit 1
+          fi
+          # 检查Tag是否已存在
+          if git rev-parse --verify --quiet $MANUAL_TAG; then
+            echo "错误：Tag $MANUAL_TAG 已存在，请更换版本号"
+            exit 1
+          fi
+          # 存入环境变量
+          echo "NEW_TAG=$MANUAL_TAG" >> $GITHUB_ENV
+          echo "手动版本号验证通过：$MANUAL_TAG"
+
+      # 步骤5：创建并推送最终Tag（自动/手动触发通用）
       - name: 创建并推送Tag
         run: |
-          TAG=${{ github.event.inputs.release_version }}
-          git tag -a $TAG -m "EZ-Clean手动发布 $TAG（触发时间：$(date +'%Y-%m-%d %H:%M:%S')）"
-          git push origin $TAG
-          echo "Tag $TAG 已创建并推送成功"
+          FINAL_TAG=${{ env.NEW_TAG }}
+          # 创建带注释的Tag（包含触发类型和时间）
+          TRIGGER_TYPE=$([ "${{ github.event_name }}" == "push" ] && echo "自动触发" || echo "手动触发")
+          git tag -a $FINAL_TAG -m "EZ-Clean-$TRIGGER_TYPE $FINAL_TAG（时间：$(date +'%Y-%m-%d %H:%M:%S')）"
+          # 推送Tag到远程
+          git push origin $FINAL_TAG
+          echo "Tag $FINAL_TAG 已创建并推送"
 
-      # 步骤6：打包为EZ-Clean.zip
+      # 步骤6：打包仓库内容为EZ-Clean.zip
       - name: 打包为EZ-Clean.zip
         run: |
           cd $GITHUB_WORKSPACE
+          # 排除冗余目录（按需增删，如保留docs可删除"docs/*"）
           zip -r EZ-Clean.zip . -x ".git/*" ".github/*" "node_modules/*"
           echo "ZIP包打包完成：EZ-Clean.zip"
 
-      # 步骤7：创建GitHub Release
+      # 步骤7：创建GitHub Release（自动/手动触发通用）
       - name: 创建GitHub Release
         uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         id: create_release
         with:
-          tag_name: ${{ github.event.inputs.release_version }}
-          release_name: EZ-Clean-${{ github.event.inputs.release_version }}
-          draft: false
-          prerelease: false
+          tag_name: ${{ env.NEW_TAG }}  # 使用自动/手动生成的Tag
+          release_name: EZ-Clean-${{ env.NEW_TAG }}  # Release名称与Tag关联
+          draft: false  # 直接发布（需草稿可改为true）
+          prerelease: false  # 正式版本（预发布改为true）
 
-      # 步骤8：上传ZIP包到Release
-      - name: 上传ZIP包到Release
+      # 步骤8：上传ZIP包到Release资产
+      - name: 上传EZ-Clean.zip到Release
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
