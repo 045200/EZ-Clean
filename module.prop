@@ -1,0 +1,7 @@
+id=EZ-Clean
+name=EZ-Clean
+version=3.6
+versionCode=2510031
+author=YourName
+description=Magisk/KernelSU 挂载式垃圾清理，支持黑白名单+定时
+supports=24-34
