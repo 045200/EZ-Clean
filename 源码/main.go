@@ -149,7 +149,7 @@ func init() {
 
 func initPaths() error {
 	// 设置数据目录为 /data/media/0/Android/EZ-Clean
-	dataDir := "/data/media/0/Android/EZ-Clean"
+	dataDir := "/storage/emulated/0/Android/EZ-Clean/"
 	
 	// 确保数据目录存在
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
