@@ -1,16 +1,9 @@
-# 工作流名称：EZ-Clean自动+手动发布（跳过源码打包文件夹）
 name: EZ-Clean-Auto-Manual-Release
 
 on:
   push:
-    branches: [ "main" ]  # main分支推送自动触发，递增修订号
-  workflow_dispatch:      # 手动触发，自定义版本号
-    inputs:
-      release_version:
-        description: '手动输入版本号（格式：vX.Y.Z，例：v1.1.0）'
-        required: true
-        default: 'v1.0.0'
-        type: string
+    branches: [ "main" ]  # main分支推送自动触发，使用module标签
+  workflow_dispatch:      # 手动触发，直接使用module标签（无需输入版本号）
 
 jobs:
   build-and-release:
@@ -27,65 +20,39 @@ jobs:
           git config --global user.email "${{ github.actor }}@users.noreply.github.com"
           echo "Git身份配置完成"
 
-      - name: 自动递增版本号（仅main分支推送触发）
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        id: auto_version
+      - name: 创建/覆盖module标签（固定标签，强制覆盖旧标签）
         run: |
-          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v1.0.0")
-          echo "当前最新Tag：$LATEST_TAG"
-          VERSION_PARTS=(${LATEST_TAG//./ })
-          MAJOR=${VERSION_PARTS[0]#v}
-          MINOR=${VERSION_PARTS[1]}
-          PATCH=${VERSION_PARTS[2]}
-          NEW_PATCH=$((PATCH + 1))
-          NEW_TAG="v$MAJOR.$MINOR.$NEW_PATCH"
-          echo "自动生成新Tag：$NEW_TAG"
-          echo "NEW_TAG=$NEW_TAG" >> $GITHUB_ENV
-
-      - name: 验证手动版本号（仅手动触发）
-        if: github.event_name == 'workflow_dispatch'
-        id: manual_version
-        run: |
-          MANUAL_TAG=${{ github.event.inputs.release_version }}
-          if ! [[ $MANUAL_TAG =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "错误：版本号格式无效！需符合v主版本.次版本.修订号（例：v1.0.1）"
-            exit 1
-          fi
-          if git rev-parse --verify --quiet $MANUAL_TAG; then
-            echo "错误：Tag $MANUAL_TAG 已存在，请更换版本号"
-            exit 1
-          fi
-          echo "NEW_TAG=$MANUAL_TAG" >> $GITHUB_ENV
-          echo "手动版本号验证通过：$MANUAL_TAG"
-
-      - name: 创建并推送Tag
-        run: |
-          FINAL_TAG=${{ env.NEW_TAG }}
+          FIXED_TAG="module"  # 固定标签为module
           TRIGGER_TYPE=$([ "${{ github.event_name }}" == "push" ] && echo "自动触发" || echo "手动触发")
-          git tag -a $FINAL_TAG -m "EZ-Clean-$TRIGGER_TYPE $FINAL_TAG（时间：$(date +'%Y-%m-%d %H:%M:%S')）"
-          git push origin $FINAL_TAG
-          echo "Tag $FINAL_TAG 已创建并推送"
+          # 删除本地旧标签（若存在），避免标签重复报错
+          git tag -d $FIXED_TAG 2>/dev/null || true
+          # 删除远程旧标签（若存在），实现覆盖效果
+          git push origin --delete $FIXED_TAG 2>/dev/null || true
+          # 创建新module标签并推送（--force确保覆盖）
+          git tag -a $FIXED_TAG -m "EZ-Clean-$TRIGGER_TYPE（固定标签：$FIXED_TAG，时间：$(date +'%Y-%m-%d %H:%M:%S')）"
+          git push origin $FIXED_TAG --force
+          echo "固定标签 $FIXED_TAG 已创建/覆盖并推送"
 
-      # 核心修改：新增 -x "源码/*" 跳过“源码”文件夹
       - name: 打包为EZ-Clean.zip（跳过源码文件夹）
         run: |
           cd $GITHUB_WORKSPACE
-          # 通过 -x "源码/*" 排除目标文件夹，其他排除规则保留
           zip -r EZ-Clean.zip . -x ".git/*" ".github/*" "node_modules/*" "源码/*"
-          echo "ZIP包打包完成（已跳过‘源码打包’文件夹）：EZ-Clean.zip"
+          echo "ZIP包打包完成（已跳过‘源码’文件夹）：EZ-Clean.zip"
 
-      - name: 创建GitHub Release
+      - name: 创建/更新GitHub Release（使用module标签）
         uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         id: create_release
         with:
-          tag_name: ${{ env.NEW_TAG }}
-          release_name: EZ-Clean-${{ env.NEW_TAG }}
+          tag_name: "module"  # 固定使用module标签
+          release_name: EZ-Clean-module  # 固定Release名称
           draft: false
           prerelease: false
+          # 若module标签已存在Release，此参数可覆盖旧Release内容
+          overwrite: true
 
-      - name: 上传EZ-Clean.zip到Release
+      - name: 上传EZ-Clean.zip到Release（覆盖旧文件）
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -94,3 +61,5 @@ jobs:
           asset_path: ${{ github.workspace }}/EZ-Clean.zip
           asset_name: EZ-Clean.zip
           asset_content_type: application/zip
+          # 覆盖同名资产（确保每次发布的文件是最新的）
+          overwrite: true
