@@ -4,7 +4,6 @@
 ![Support](https://img.shields.io/badge/Support-Magisk%20%7C%20KernelSU-blue)
 ![Android Requirement](https://img.shields.io/badge/Android-7.0%2B-orange)
 
-EZ-Clean模块下载地址:[EZ-Clean]https://github.com/045200/EZ-Clean/releases
 
 ## 项目介绍
 EZ-Clean 是一款专为 **Root 后的 Android 设备**设计的智能清理工具，支持通过 **Magisk**（通用 Root 框架）和 **KernelSU**（内核级 Root 框架）以模块形式安装。  
@@ -58,13 +57,13 @@ EZ-Clean 是一款专为 **Root 后的 Android 设备**设计的智能清理工�
 
 ### 2. Magisk 安装
 1. 打开 **Magisk Manager** → 切换至「模块」标签页 → 点击底部「从存储安装」。  
-2. 在文件浏览器中找到下载的 `EZ-Clean.zip`，选择并确认刷入（无需额外勾选选项）。  
+2. 在文件浏览器中找到下载的 `EZ-Clean-Magisk.zip`，选择并确认刷入（无需额外勾选选项）。  
 3. 刷入完成后，点击「重启设备」，模块自动激活，核心程序部署至 `/data/adb/modules/EZ-Clean/`，数据目录自动创建。  
 
 
 ### 3. KernelSU 安装
 1. 打开 **KernelSU Manager** → 切换至「模块」标签页 → 点击右上角「+」号（上传模块）。  
-2. 选择下载的 `EZ-Clean.zip`，等待上传并安装（KernelSU 会自动验证模块兼容性）。  
+2. 选择下载的 `EZ-Clean-KernelSU.zip`，等待上传并安装（KernelSU 会自动验证模块兼容性）。  
 3. 重启设备，模块通过 KernelSU 加载，数据目录 `/storage/emulated/0/Android/EZ-Clean/` 自动生成。  
 
 
