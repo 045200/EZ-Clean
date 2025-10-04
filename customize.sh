@@ -1,157 +1,173 @@
-#!/system/bin/sh
+##########################################################################################
+# Config Flags
+##########################################################################################
+SKIPMOUNT=false
+PROPFILE=true
+POSTFSDATA=true
+LATESTARTSERVICE=true
 
-SKIPUNZIP=1
+# 设备信息
+Manufacturer=$(getprop ro.product.vendor.manufacturer 2>/dev/null || getprop ro.product.manufacturer 2>/dev/null)
+Codename=$(getprop ro.product.device 2>/dev/null)
+Model=$(getprop ro.product.vendor.model 2>/dev/null || getprop ro.product.model 2>/dev/null)
+Build=$(getprop ro.build.version.incremental 2>/dev/null)
+Android=$(getprop ro.build.version.release 2>/dev/null)
+API=$(getprop ro.build.version.sdk 2>/dev/null)
+MIUI=$(getprop ro.miui.ui.version.code 2>/dev/null)
 
-# 使用 MODPATH 变量，这是 KernelSU/Magisk 提供的标准模块路径
-MODULE_PATH="$MODPATH"
-TARGET_PATH="/storage/emulated/0/Android/EZ-Clean"
-LOCK_FILE="/data/adb/modules/EZ-Clean/ez_service.pid"
-PROCESS_NAME="EZ"
+getVolumeKey() {
+    ui_print "- 监听音量键 按[+]选择是 按[-]选择否"
+    local key
+    while true; do
+        key=$(getevent -qlc 1 2>/dev/null | awk '{ print $3 }' 2>/dev/null)
+        case "$key" in
+            KEY_VOLUMEUP) return 0 ;;
+            KEY_VOLUMEDOWN) return 1 ;;
+        esac
+    done
+}
 
-# 输出日志
-ui_print ""
-ui_print "         正在安装 EZ-Clean 模块"
-ui_print ""
+print_modname() {
+    ui_print "===================================================="
+    ui_print "- 设备: $Model"
+    ui_print "- 制造商: $Manufacturer"
+    ui_print "- SDK 平台: API level $API"
+    ui_print "- 安卓版本: Android $Android"
+    [ -n "$MIUI" ] && ui_print "- 系统版本: MIUI $MIUI"
+    ui_print "- 构建版本: $Build"
+    ui_print "===================================================="
+    ui_print " "
+    ui_print " - Magisk Modules Author : 045200"
+    ui_print " - Magisk Modules Name: EZ-Clean"
+    ui_print " - Magisk Modules Version: 1.0.0"
+    ui_print " - 更新时间: 2025-10-04"
+    ui_print " "
+    ui_print "————————————————————————————————————————————————————————————————"
+    ui_print " "
+    ui_print " - 欢迎使用 【EZ-Clean】"
+    ui_print " - 模块默认启动时间：每天 12 小时运行一次"
+    ui_print " - 模块配置目录位于: /storage/emulated/0/Android/EZ-Clean/"
+    ui_print " - 模块配置文件包含: *.conf *.json reload.sh"
+    ui_print " "
+    ui_print "————————————————————————————————————————————————————————————————"
+    
+    ui_print " "
+    ui_print "- 暂停10秒，请详细阅读模块配置路径"
+    sleep 10
+    ui_print " "
 
-# 正确检测 KernelSU 环境
-if [ "$KSU" = "true" ]; then
-    ui_print "- 检测到 KernelSU 环境"
-    IS_KSU=true
-elif [ -d "/data/adb/ksu" ]; then
-    ui_print "- 检测到 KernelSU 环境（通过目录检测）"
-    IS_KSU=true
-    KSU=true
-else
-    ui_print "- 检测到 Magisk 环境"
-    IS_KSU=false
-    KSU=false
-fi
-
-# 检查用户存储路径是否可用
-ui_print "- 检查用户存储路径..."
-if [ ! -d "/storage/emulated/0" ]; then
-    ui_print "  - 错误: 未找到标准用户存储路径"
-    ui_print "  - 模块安装失败"
-    abort
-else
-    ui_print "  - 用户存储路径可用"
-fi
-
-# 停止正在运行的 EZ 进程
-ui_print "- 检查并停止正在运行的 EZ 进程..."
-
-# 检查旧版本中的锁文件
-OLD_LOCK_FILE="/data/adb/modules/EZ-Clean/ez_service.pid"
-if [ -f "$OLD_LOCK_FILE" ]; then
-    ui_print "  - 发现旧版本进程锁文件，读取PID..."
-    TARGET_PID=$(cat "$OLD_LOCK_FILE")
-
-    if [ -n "$TARGET_PID" ] && [ "$TARGET_PID" -gt 0 ] 2>/dev/null; then
-        ui_print "  - 正在停止进程 PID: $TARGET_PID"
-
-        # 首先尝试优雅终止
-        kill -TERM "$TARGET_PID" 2>/dev/null
-        sleep 1
-
-        # 检查进程是否仍然存在，如果存在则强制杀死
-        if ps -p "$TARGET_PID" > /dev/null 2>&1; then
-            ui_print "  - 进程未正常退出，强制终止..."
-            kill -KILL "$TARGET_PID" 2>/dev/null
-            sleep 1
-        fi
-
-        # 再次确认进程已被杀死
-        if ! ps -p "$TARGET_PID" > /dev/null 2>&1; then
-            ui_print "  - 成功终止 PID: $TARGET_PID"
-        else
-            ui_print "  - 警告: 可能未能完全终止进程"
-        fi
+    ui_print "- 是否已阅读并熟知模块配置目录？"
+    if getVolumeKey; then
+        ui_print "- 您已熟知模块配置目录，为您继续刷入"
     else
-        ui_print "  - 锁文件中的PID无效: $TARGET_PID"
+        ui_print "- 您未详细阅读模块配置信息，刷入程序终止"
+        abort "- 安装中止"
+    fi
+}
+
+# 安装函数
+on_install() {
+    ui_print " "
+    ui_print "- 开始安装 EZ-Clean 模块..."
+    
+    # 配置目录路径
+    CONFIG_DIR="/storage/emulated/0/Android/EZ-Clean"
+    
+    # 创建配置目录
+    ui_print "- 创建配置目录: $CONFIG_DIR"
+    mkdir -p "$CONFIG_DIR" 2>/dev/null
+    
+    # 检查目录是否创建成功
+    if [ ! -d "$CONFIG_DIR" ]; then
+        ui_print "- 错误: 无法创建配置目录"
+        abort "- 安装失败"
     fi
     
-    # 清理旧的锁文件
-    rm -f "$OLD_LOCK_FILE"
-    ui_print "  - 清理旧锁文件"
-else
-    ui_print "  - 未找到进程锁文件，可能首次安装或进程未运行"
-fi
-
-# 使用进程名查找并终止 (备用方法)
-ui_print "  - 使用进程名二次检查..."
-PIDs=$(ps -A -o pid,args | grep -v "grep" | grep "$PROCESS_NAME" | awk '{print $1}')
-
-if [ -n "$PIDs" ]; then
-    ui_print "  - 发现残留进程，正在清理: $PIDs"
-    echo "$PIDs" | while read -r PID; do
-        kill -9 "$PID" 2>/dev/null
+    # 复制配置文件
+    ui_print "- 复制配置文件到 $CONFIG_DIR"
+    
+    # 复制所有.conf文件
+    for conf_file in "$MODPATH"/*.conf; do
+        if [ -f "$conf_file" ]; then
+            filename=$(basename "$conf_file")
+            ui_print "- 复制配置文件: $filename"
+            cp "$conf_file" "$CONFIG_DIR/" 2>/dev/null
+        fi
     done
-    sleep 1
+    
+    # 复制.json文件
+    for json_file in "$MODPATH"/*.json; do
+        if [ -f "$json_file" ]; then
+            filename=$(basename "$json_file")
+            ui_print "- 复制配置文件: $filename"
+            cp "$json_file" "$CONFIG_DIR/" 2>/dev/null
+        fi
+    done
+    
+    # 复制 reload.sh 脚本
+    if [ -f "$MODPATH/reload.sh" ]; then
+        ui_print "- 复制脚本: reload.sh"
+        cp "$MODPATH/reload.sh" "$CONFIG_DIR/" 2>/dev/null
+    fi
+    
+    # 设置配置文件权限
+    ui_print "- 设置配置文件权限"
+    find "$CONFIG_DIR" -type f -name "*.conf" -exec chmod 644 {} + 2>/dev/null
+    find "$CONFIG_DIR" -type f -name "*.json" -exec chmod 644 {} + 2>/dev/null
+    find "$CONFIG_DIR" -type f -name "reload.sh" -exec chmod 755 {} + 2>/dev/null
+    
+    # 验证安装
+    ui_print "- 验证安装..."
+    config_file_count=0
+    if [ -d "$CONFIG_DIR" ]; then
+        config_file_count=$(ls "$CONFIG_DIR" | wc -l)
+        ui_print "- 配置目录中的文件 ($config_file_count 个):"
+        ls -la "$CONFIG_DIR" | while read line; do
+            ui_print "  $line"
+        done
+    fi
+    
+    if [ $config_file_count -gt 0 ]; then
+        ui_print "- 安装成功! 共复制 $config_file_count 个配置文件"
+        ui_print "- 配置文件位于: $CONFIG_DIR"
+    else
+        ui_print "- 警告: 配置目录为空"
+    fi
+    
+    ui_print " "
+    ui_print "- EZ-Clean 模块安装完成!"
+}
+
+# 设置权限函数
+set_permissions() {
+    # 设置模块文件权限
+    set_perm_recursive "$MODPATH" 0 0 0755 0644
+    
+    # 设置 EZ 二进制程序的执行权限
+    if [ -f "$MODPATH/EZ" ]; then
+        set_perm "$MODPATH/EZ" 0 0 0755
+    fi
+    
+    # 设置服务脚本权限
+    if [ -f "$MODPATH/service.sh" ]; then
+        set_perm "$MODPATH/service.sh" 0 0 0755
+    fi
+    
+    ui_print "- 权限设置完成"
+}
+
+# KernelSU 特定的安装处理
+if [ -n "$KSU" ]; then
+    ui_print "- 检测到 KernelSU 环境"
+    # 在KernelSU中，MODPATH可能已经设置
+    if [ -z "$MODPATH" ]; then
+        MODPATH="$1"
+    fi
+    print_modname
+    on_install
+    set_permissions
 else
-    ui_print "  - 确认无残留 EZ 进程"
+    # Magisk 环境
+    ui_print "- 检测到 Magisk 环境"
+    print_modname
 fi
-
-# 创建目标目录（确保路径存在）
-ui_print "- 创建目标目录: $TARGET_PATH..."
-mkdir -p "$TARGET_PATH"
-
-# 提取模块中指定文件到目标路径
-ui_print "- 提取核心文件到目标目录..."
-unzip -o "$ZIPFILE" "blacklist.conf" "whitelist.conf" "MT.conf" "config.json" "reload.sh" -d "$TARGET_PATH" >&2
-
-# 提取模块其他必要文件到标准模块路径
-ui_print "- 提取模块基础文件到模块路径..."
-unzip -o "$ZIPFILE" -x 'META-INF/*' 'blacklist.conf' 'whitelist.conf' 'MT.conf' 'config.json' 'reload.sh' -d "$MODULE_PATH" >&2
-
-# 设置模块路径文件权限
-ui_print "- 设置模块路径文件权限..."
-set_perm_recursive "$MODULE_PATH" 0 0 0755 0644
-
-# 确保 EZ 二进制文件有执行权限
-if [ -f "$MODULE_PATH/EZ" ]; then
-    chmod 0755 "$MODULE_PATH/EZ"
-    ui_print "  - 设置 EZ 二进制文件执行权限"
-fi
-
-# 设置模块服务脚本权限
-if [ -f "$MODULE_PATH/service.sh" ]; then
-    chmod 0755 "$MODULE_PATH/service.sh"
-    ui_print "  - 设置 service.sh 执行权限"
-fi
-if [ -f "$MODULE_PATH/post-fs-data.sh" ]; then
-    chmod 0755 "$MODULE_PATH/post-fs-data.sh"
-    ui_print "  - 设置 post-fs-data.sh 执行权限"
-fi
-
-# 设置目标路径下文件权限
-ui_print "- 设置目标目录文件权限..."
-
-# 由于用户存储区的权限限制，使用 chmod 设置权限
-chmod 0755 "$TARGET_PATH" 2>/dev/null
-chmod 0644 "$TARGET_PATH"/*.conf 2>/dev/null
-chmod 0644 "$TARGET_PATH"/*.json 2>/dev/null
-
-# 单独设置 reload.sh 执行权限
-if [ -f "$TARGET_PATH/reload.sh" ]; then
-    chmod 0755 "$TARGET_PATH/reload.sh"
-    ui_print "  - 设置 reload.sh 执行权限"
-fi
-
-# 创建备份目录和日志目录
-mkdir -p "$TARGET_PATH/backup"
-mkdir -p "$TARGET_PATH/logs"
-chmod 0755 "$TARGET_PATH/backup" 2>/dev/null
-chmod 0755 "$TARGET_PATH/logs" 2>/dev/null
-
-# 模块功能说明
-ui_print "- 模块功能说明:"
-ui_print "  • 核心配置文件位于: $TARGET_PATH/"
-ui_print "  • 直接编辑 $TARGET_PATH/ 下的文件即可修改模块配置"
-ui_print "  • 执行 $TARGET_PATH/reload.sh 可即时重载配置"
-ui_print "  • 日志文件保存在: $TARGET_PATH/logs/"
-
-ui_print "- 安装完成!"
-ui_print ""
-ui_print "模块安装路径: $MODULE_PATH"
-ui_print "核心配置目录: $TARGET_PATH"
-ui_print ""

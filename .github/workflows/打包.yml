@@ -62,4 +62,8 @@ jobs:
           asset_name: EZ-Clean.zip
           asset_content_type: application/zip
           # 覆盖同名资产（确保每次发布的文件是最新的）
+<<<<<<< HEAD
           overwrite: true
+=======
+          overwrite: true
+>>>>>>> 3e82296 (优化安装脚本)
