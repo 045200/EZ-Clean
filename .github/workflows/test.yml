@@ -1,0 +1,353 @@
+# GitHub Actions Workflow for building a multi-architecture Go application for Android
+#
+# This workflow automates the following process:
+# 1. Sets up the build environment with Go and the Android NDK.
+# 2. Builds the Go project using CGO for four different Android ABIs (arm64-v8a, armeabi-v7a, x86_64, x86)
+#    and in two variants (basic, full).
+# 3. Packages each build as a flashable Magisk module zip file.
+# 4. Runs a summary job to ensure all 8 builds were successful.
+# 5. If running on a push to the main branch, it creates a new GitHub Release.
+# 6. The release includes all 8 Magisk module zips, corresponding update.json files for auto-updates,
+#    and detailed, dynamically generated release notes.
+# 7. Cleans up old workflow runs to keep the repository tidy.
+
+name: EZ-Clean-Android10-CGO-test
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  # Allows manual triggering of the workflow from the GitHub UI
+  workflow_dispatch:
+
+env:
+  GO_VERSION: '1.21'
+  MODULE_NAME: 'EZ-Clean'
+  # Use a more recent stable NDK version for better toolchain support
+  NDK_VERSION: 'r26d'
+
+jobs:
+  build-multi-arch:
+    runs-on: ubuntu-latest
+    strategy:
+      # The build matrix defines all combinations of architectures and variants to build.
+      # This results in 2 variants * 4 architectures = 8 parallel build jobs.
+      matrix:
+        include:
+          - goarch: arm64
+            android_abi: arm64-v8a
+            toolchain_triple: aarch64-linux-android29
+          - goarch: arm
+            android_abi: armeabi-v7a
+            toolchain_triple: armv7a-linux-androideabi29
+          - goarch: amd64
+            android_abi: x86_64
+            toolchain_triple: x86_64-linux-android29
+          - goarch: 386
+            android_abi: x86
+            toolchain_triple: i686-linux-android29
+        variant: [basic, full]
+      # Ensures that if one build in the matrix fails, the others are not cancelled.
+      fail-fast: false
+
+    name: Build ${{ matrix.variant }} for ${{ matrix.android_abi }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            **/go.sum
+
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: ${{ env.NDK_VERSION }}
+
+      - name: Cache Go modules
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install dependencies
+        run: |
+          set -e
+          sudo apt-get update
+          sudo apt-get install -y zip file
+
+      - name: Initialize Go module
+        run: |
+          set -e
+          if [ ! -f "go.mod" ]; then
+            go mod init github.com/${{ github.repository }}
+          fi
+          go mod tidy
+
+      # This step provides flexibility in project structure, looking for source files
+      # in both the root and a 'source' subdirectory.
+      - name: Locate source files
+        id: source_files
+        run: |
+          if [ -f "source/main.go" ]; then
+            echo "MAIN_GO=source/main.go" >> $GITHUB_OUTPUT
+            echo "EZ_GO=source/ez.go" >> $GITHUB_OUTPUT
+          elif [ -f "main.go" ]; then
+            echo "MAIN_GO=main.go" >> $GITHUB_OUTPUT
+            echo "EZ_GO=ez.go" >> $GITHUB_OUTPUT
+          else
+            echo "Error: Go source files not found."
+            exit 1
+          fi
+
+      - name: Setup build parameters
+        id: build_params
+        run: |
+          echo "ZIP_NAME=EZ-Clean-${{ matrix.variant }}-${{ matrix.android_abi }}.zip" >> $GITHUB_OUTPUT
+          echo "MODULE_DIR=module-${{ matrix.variant }}-${{ matrix.android_abi }}" >> $GITHUB_OUTPUT
+
+      # This verification step is crucial for debugging NDK/toolchain issues.
+      - name: Verify NDK compiler exists
+        run: |
+          set -e
+          COMPILER_PATH="${{ steps.setup-ndk.outputs.NDK_PATH }}/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.toolchain_triple }}-clang"
+          echo "Checking for compiler at: $COMPILER_PATH"
+          if [ ! -f "$COMPILER_PATH" ]; then
+            echo "❌ Compiler not found at expected path!"
+            echo "Listing available compilers for debugging:"
+            find "${{ steps.setup-ndk.outputs.NDK_PATH }}/toolchains/llvm/prebuilt/linux-x86_64/bin/" -name "*clang*" 2>/dev/null | head -20
+            exit 1
+          fi
+          echo "✅ Compiler found. Version:"
+          "$COMPILER_PATH" --version
+
+      - name: Build with CGO for Android
+        env:
+          GOOS: android
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 1
+          CC: ${{ steps.setup-ndk.outputs.NDK_PATH }}/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.toolchain_triple }}-clang
+        run: |
+          set -e
+          BINARY_NAME="EZ-${{ matrix.variant }}-${{ matrix.android_abi }}"
+          if [ "${{ matrix.variant }}" = "basic" ]; then
+            SOURCE_FILE="${{ steps.source_files.outputs.MAIN_GO }}"
+          else
+            SOURCE_FILE="${{ steps.source_files.outputs.EZ_GO }}"
+          fi
+          echo "Building source file: $SOURCE_FILE"
+          go build -ldflags="-s -w" -o "$BINARY_NAME" "$SOURCE_FILE"
+          echo "✅ Build successful. Binary info:"
+          file "$BINARY_NAME"
+          ls -lh "$BINARY_NAME"
+
+      # A temporary module.prop is created for each specific architecture.
+      # The original file is backed up and restored to keep the source tree clean.
+      - name: Update module.prop
+        run: |
+          set -e
+          if [ -f "module.prop" ]; then
+            cp module.prop module.prop.backup
+          fi
+          cat > module.prop << EOF
+          id=${{ env.MODULE_NAME }}
+          name=${{ env.MODULE_NAME }}
+          version=v$(date +%Y.%m.%d)
+          versionCode=$(( $(date +%s) / 100 ))
+          author=GitHub Actions
+          description=Multi-arch EZ Clean module. This build is for ${{ matrix.android_abi }}.
+          architecture=${{ matrix.android_abi }}
+          EOF
+
+      - name: Prepare module files
+        run: |
+          set -e
+          BINARY_NAME="EZ-${{ matrix.variant }}-${{ matrix.android_abi }}"
+          MODULE_DIR="${{ steps.build_params.outputs.MODULE_DIR }}"
+          mkdir -p "$MODULE_DIR"
+          
+          # Copy common module files if they exist
+          [ -d "META-INF" ] && cp -r META-INF/ "$MODULE_DIR"/
+          [ -f "customize.sh" ] && cp customize.sh "$MODULE_DIR"/
+          [ -f "service.sh" ] && cp service.sh "$MODULE_DIR"/
+          cp *.conf "$MODULE_DIR"/ 2>/dev/null || true
+          
+          # Copy the generated module.prop and the compiled binary
+          cp module.prop "$MODULE_DIR"/
+          cp "$BINARY_NAME" "$MODULE_DIR"/EZ
+          chmod +x "$MODULE_DIR"/EZ
+          
+          echo "Module files prepared in $MODULE_DIR/:"
+          ls -la "$MODULE_DIR"/
+
+      - name: Package module
+        run: |
+          set -e
+          cd ${{ steps.build_params.outputs.MODULE_DIR }}
+          zip -r ../${{ steps.build_params.outputs.ZIP_NAME }} .
+          cd ..
+          echo "Packaging completed: ${{ steps.build_params.outputs.ZIP_NAME }}"
+
+      - name: Restore module.prop
+        if: always()
+        run: |
+          if [ -f "module.prop.backup" ]; then
+            mv module.prop.backup module.prop
+            echo "Original module.prop restored."
+          fi
+
+      - name: Upload module artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.build_params.outputs.ZIP_NAME }}
+          path: ${{ steps.build_params.outputs.ZIP_NAME }}
+          retention-days: 7
+
+  # This job runs after all builds and acts as a gatekeeper for the release.
+  # It ensures that all expected artifacts were created before proceeding.
+  build-summary:
+    name: Build Summary
+    runs-on: ubuntu-latest
+    needs: build-multi-arch
+    if: always() # Run this job even if some builds failed, to provide a summary.
+    outputs:
+      build_succeeded: ${{ steps.summary.outputs.build_succeeded }}
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          
+      - name: Show build summary
+        id: summary
+        run: |
+          set -e
+          echo "=== Build Summary ==="
+          TOTAL_EXPECTED=8
+          # The download action creates a directory for each artifact.
+          TOTAL_BUILT=$(find artifacts -type f -name "*.zip" | wc -l)
+          
+          echo "Builds completed for:"
+          find artifacts -type f -name "*.zip" -printf "✅ %f\n"
+
+          echo "====================="
+          echo "Total built: $TOTAL_BUILT/$TOTAL_EXPECTED"
+          
+          if [ $TOTAL_BUILT -ne $TOTAL_EXPECTED ]; then
+            echo "build_succeeded=false" >> $GITHUB_OUTPUT
+            echo "⚠️ Some builds failed. Aborting release."
+            exit 1
+          else
+            echo "build_succeeded=true" >> $GITHUB_OUTPUT
+            echo "🎉 All builds successful! Proceeding to release."
+          fi
+
+  # This job creates a GitHub release and attaches all the built artifacts.
+  # It only runs on a push to the 'main' branch after all builds have succeeded.
+  create-release:
+    runs-on: ubuntu-latest
+    needs: build-summary
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.build-summary.outputs.build_succeeded == 'true'
+    permissions:
+      contents: write # Required to create a release and upload assets.
+      
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare Release Assets
+        id: release_assets
+        run: |
+          set -e
+          # Move all zips from subdirectories to the top-level artifacts directory
+          find artifacts -type f -name "*.zip" -exec mv {} artifacts/ \;
+
+          TAG_NAME="android10-$(date +'%Y.%m.%d-%H%M')"
+          RELEASE_NAME="${{ env.MODULE_NAME }} Android 10+ | $(date +'%Y.%m.%d')"
+          VERSION_CODE=$(( $(date +%s) / 100 ))
+
+          echo "TAG_NAME=${TAG_NAME}" >> $GITHUB_OUTPUT
+          echo "RELEASE_NAME=${RELEASE_NAME}" >> $GITHUB_OUTPUT
+          
+          # Generate update.json for each architecture
+          for zip_file in artifacts/*.zip; do
+            BASENAME=$(basename "$zip_file" .zip)
+            ABI=$(echo "$BASENAME" | sed -E 's/.*-(arm64-v8a|armeabi-v7a|x86_64|x86)$/\1/')
+            JSON_FILE="artifacts/update-${ABI}.json"
+            cat > "$JSON_FILE" << EOF
+            {
+              "version": "v$(date +%Y.%m.%d)",
+              "versionCode": ${VERSION_CODE},
+              "zipUrl": "https://github.com/${{ github.repository }}/releases/download/${TAG_NAME}/$(basename "$zip_file")",
+              "changelog": "https://github.com/${{ github.repository }}/releases/tag/${TAG_NAME}"
+            }
+EOF
+          done
+
+          # Generate Release Notes
+          NOTES_FILE="artifacts/RELEASE_NOTES.md"
+          echo "# ${{ env.MODULE_NAME }} Multi-Architecture Release" > "$NOTES_FILE"
+          echo "**Build Time**: $(date +'%Y-%m-%d %H:%M:%S UTC')" >> "$NOTES_FILE"
+          echo "**Commit**: \`${{ github.sha }}\`" >> "$NOTES_FILE"
+          echo "" >> "$NOTES_FILE"
+          echo "This release provides builds for all major Android CPU architectures. Please install the module that matches your device's architecture." >> "$NOTES_FILE"
+          echo "" >> "$NOTES_FILE"
+          echo "### Installation" >> "$NOTES_FILE"
+          echo "1. Check your device's ABI (e.g., using an app like CPU-Z)." >> "$NOTES_FILE"
+          echo "2. Download the matching zip file from the assets below." >> "$NOTES_FILE"
+          echo "3. Install it through Magisk or KernelSU and reboot." >> "$NOTES_FILE"
+          echo "" >> "$NOTES_FILE"
+          echo "### Assets" >> "$NOTES_FILE"
+          echo "" >> "$NOTES_FILE"
+          echo "#### Basic Version (Core functionality)" >> "$NOTES_FILE"
+          echo "| Architecture | Size |" >> "$NOTES_FILE"
+          echo "| :--- | :--- |" >> "$NOTES_FILE"
+          find artifacts -name "EZ-Clean-basic-*.zip" -print0 | sort -z | while IFS= read -r -d '' file; do
+              SIZE=$(du -h "$file" | cut -f1); ARCH=$(basename "$file" .zip | sed -E 's/.*-(arm64-v8a|armeabi-v7a|x86_64|x86)$/\1/')
+              echo "| \`$ARCH\` | \`$SIZE\` |" >> "$NOTES_FILE"; done
+          echo "" >> "$NOTES_FILE"
+          echo "#### Full Version (Extended features)" >> "$NOTES_FILE"
+          echo "| Architecture | Size |" >> "$NOTES_FILE"
+          echo "| :--- | :--- |" >> "$NOTES_FILE"
+          find artifacts -name "EZ-Clean-full-*.zip" -print0 | sort -z | while IFS= read -r -d '' file; do
+              SIZE=$(du -h "$file" | cut -f1); ARCH=$(basename "$file" .zip | sed -E 's/.*-(arm64-v8a|armeabi-v7a|x86_64|x86)$/\1/')
+              echo "| \`$ARCH\` | \`$SIZE\` |" >> "$NOTES_FILE"; done
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release_assets.outputs.TAG_NAME }}
+          name: ${{ steps.release_assets.outputs.RELEASE_NAME }}
+          body_path: artifacts/RELEASE_NOTES.md
+          files: artifacts/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Cleans up old workflow runs to prevent clutter.
+  workflow-cleanup:
+    runs-on: ubuntu-latest
+    needs: create-release
+    if: always() && github.ref == 'refs/heads/main'
+    steps:
+      - name: Clean old workflow runs
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          retain_days: 0
+          keep_minimum_runs: 0
+
