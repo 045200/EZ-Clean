@@ -10,6 +10,11 @@ on:
         required: true
         type: string
         default: 'v1.0.0'
+      version_code:
+        description: 'Version code (e.g., 1, 2, 3)'
+        required: true
+        type: string
+        default: '1'
       build_type:
         description: 'Build type'
         required: true
@@ -69,15 +74,19 @@ jobs:
         echo "NDK_HOME=$PWD/android-ndk-${{ env.NDK_VERSION }}" >> $GITHUB_ENV
         echo "$PWD/android-ndk-${{ env.NDK_VERSION }}/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
 
-    - name: Determine version
+    - name: Determine version and version code
       id: version
       run: |
         if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
           echo "VERSION=${{ github.event.inputs.release_version }}" >> $GITHUB_OUTPUT
+          echo "VERSION_CODE=${{ github.event.inputs.version_code }}" >> $GITHUB_OUTPUT
         else
           echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          # 对于标签触发，使用固定的版本号1，或者你可以根据需要修改
+          echo "VERSION_CODE=1" >> $GITHUB_OUTPUT
         fi
         echo "Using version: ${{ steps.version.outputs.VERSION }}"
+        echo "Using version code: ${{ steps.version.outputs.VERSION_CODE }}"
 
     - name: Check build condition
       id: check_build
@@ -115,9 +124,9 @@ jobs:
         # Copy and update module.prop
         cp ${{ matrix.module_type }}/module.prop build/${{ matrix.module_type }}_${{ matrix.arch }}/
         
-        # Use alternative sed delimiter to avoid issues with forward slashes
+        # Update module.prop with version and version code
         sed -i "s|version=.*|version=${{ steps.version.outputs.VERSION }}|" build/${{ matrix.module_type }}_${{ matrix.arch }}/module.prop
-        sed -i "s|versionCode=.*|versionCode=1|" build/${{ matrix.module_type }}_${{ matrix.arch }}/module.prop
+        sed -i "s|versionCode=.*|versionCode=${{ steps.version.outputs.VERSION_CODE }}|" build/${{ matrix.module_type }}_${{ matrix.arch }}/module.prop
         
         # Copy and update update.json
         cp ${{ matrix.module_type }}/update.json build/${{ matrix.module_type }}_${{ matrix.arch }}/
@@ -125,17 +134,22 @@ jobs:
         # Use jq for JSON manipulation if available, otherwise use sed
         if command -v jq &> /dev/null; then
           jq --arg version "${{ steps.version.outputs.VERSION }}" \
+             --arg versionCode "${{ steps.version.outputs.VERSION_CODE }}" \
              --arg zipUrl "https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/EZ-Clean-${{ matrix.module_type }}-${{ matrix.arch }}.zip" \
-             '.version = $version | .versionCode = 1 | .zipUrl = $zipUrl' \
+             --arg changelog "https://github.com/${{ github.repository }}/releases/tag/${{ steps.version.outputs.VERSION }}" \
+             '.version = $version | .versionCode = ($versionCode | tonumber) | .zipUrl = $zipUrl | .changelog = $changelog' \
              build/${{ matrix.module_type }}_${{ matrix.arch }}/update.json > temp.json && \
           mv temp.json build/${{ matrix.module_type }}_${{ matrix.arch }}/update.json
         else
           sed -i "s|\"version\": \".*\"|\"version\": \"${{ steps.version.outputs.VERSION }}\"|" build/${{ matrix.module_type }}_${{ matrix.arch }}/update.json
-          sed -i "s|\"versionCode\": [0-9]*|\"versionCode\": 1|" build/${{ matrix.module_type }}_${{ matrix.arch }}/update.json
-          sed -i "s|EZ-Clean-${{ matrix.module_type }}-.*\\.zip|EZ-Clean-${{ matrix.module_type }}-${{ matrix.arch }}.zip|" build/${{ matrix.module_type }}_${{ matrix.arch }}/update.json
+          sed -i "s|\"versionCode\": [0-9]*|\"versionCode\": ${{ steps.version.outputs.VERSION_CODE }}|" build/${{ matrix.module_type }}_${{ matrix.arch }}/update.json
+          sed -i "s|\"zipUrl\": \".*\"|\"zipUrl\": \"https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/EZ-Clean-${{ matrix.module_type }}-${{ matrix.arch }}.zip\"|" build/${{ matrix.module_type }}_${{ matrix.arch }}/update.json
+          sed -i "s|\"changelog\": \".*\"|\"changelog\": \"https://github.com/${{ github.repository }}/releases/tag/${{ steps.version.outputs.VERSION }}\"|" build/${{ matrix.module_type }}_${{ matrix.arch }}/update.json
         fi
         
         echo "Built ${{ matrix.module_type }} version for ${{ matrix.arch }}"
+        echo "Version: ${{ steps.version.outputs.VERSION }}"
+        echo "Version Code: ${{ steps.version.outputs.VERSION_CODE }}"
 
     - name: Package modules
       if: steps.check_build.outputs.should_build == 'true'
@@ -215,4 +229,5 @@ jobs:
           
           ## 构建信息
           - 触发方式: ${{ github.event_name }}
-          - 构建时间: ${{ fromJSON(format('"{0}"', github.event.head_commit.timestamp || now())) }}
+          - 构建时间: ${{ github.context.timestamp }}
+          - 版本: ${{ steps.version.outputs.VERSION }}
