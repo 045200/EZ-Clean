@@ -175,10 +175,11 @@ jobs:
         uses: sgpublic/delete-release-action@v1.1
         with:
           repo: ${{ github.repository }}
-          release_drop: true
-          release_drop_count: 3
-          release_drop_tag: true
-          token: ${{ secrets.GITHUB_TOKEN }}
+          release-drop: true
+          release-keep-count: 2
+          release-drop-tag: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # 10. 重建标签 - 添加错误处理
       - name: Recreate module tag
