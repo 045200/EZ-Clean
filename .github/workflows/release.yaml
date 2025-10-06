@@ -53,6 +53,9 @@ jobs:
     needs: version-setup
     permissions:
       contents: write
+    outputs:
+      version: ${{ needs.version-setup.outputs.version }}
+      version_code: ${{ needs.version-setup.outputs.version_code }}
     
     steps:
     - name: Checkout repository
@@ -121,6 +124,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     needs: [version-setup, update-all-json-files]
+    outputs:
+      version: ${{ needs.version-setup.outputs.version }}
+      version_code: ${{ needs.version-setup.outputs.version_code }}
     strategy:
       matrix:
         include:
@@ -236,7 +242,7 @@ jobs:
 
   release:
     runs-on: ubuntu-latest
-    needs: [build, update-all-json-files]
+    needs: [version-setup, update-all-json-files, build]
     if: always() && (needs.build.result == 'success' || needs.build.result == 'skipped')
     env:
       TZ: Asia/Shanghai  # 设置时区为北京时间
@@ -261,6 +267,9 @@ jobs:
         # 确保版本号不为空
         if [[ -z "${{ needs.version-setup.outputs.version }}" ]]; then
           echo "ERROR: Version is empty!"
+          echo "Available outputs from version-setup:"
+          echo "Version: ${{ needs.version-setup.outputs.version }}"
+          echo "Version Code: ${{ needs.version-setup.outputs.version_code }}"
           exit 1
         else
           echo "Using version: ${{ needs.version-setup.outputs.version }}"
@@ -276,10 +285,10 @@ jobs:
       if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: ${{ steps.release_version.outputs.VERSION }}
+        tag_name: ${{ needs.version-setup.outputs.version }}
         files: artifacts/**/*.zip
         body: |
-          # EZ-Clean Module Release ${{ steps.release_version.outputs.VERSION }}
+          # EZ-Clean Module Release ${{ needs.version-setup.outputs.version }}
           
           ## 说明
           请根据CPU架构下载对应版本的模块包！支持magisk和kernelsu刷入。
@@ -300,5 +309,5 @@ jobs:
           ## 构建信息
           - 触发方式: ${{ github.event_name }}
           - 构建时间: ${{ steps.timestamp.outputs.BUILD_TIME }}
-          - 版本: ${{ steps.release_version.outputs.VERSION }}
+          - 版本: ${{ needs.version-setup.outputs.version }}
           - 版本代码: ${{ needs.version-setup.outputs.version_code }}
