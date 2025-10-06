@@ -30,12 +30,6 @@ jobs:
           - arch: arm
             goarch: arm
             cc: armv7a-linux-androideabi24-clang
-          - arch: x86
-            goarch: 386
-            cc: i686-linux-android24-clang
-          - arch: x86_64
-            goarch: amd64
-            cc: x86_64-linux-android24-clang
 
     steps:
     - name: Checkout repository
@@ -55,7 +49,7 @@ jobs:
         echo "$PWD/android-ndk-${{ env.NDK_VERSION }}/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
 
     - name: Build basic version
-      if: github.event.inputs.version_type != 'multi'
+      if: ${{ github.event.inputs.version_type != 'multi' }}
       run: |
         export GOOS=android
         export GOARCH=${{ matrix.goarch }}
@@ -92,7 +86,7 @@ EOF
 EOF
 
     - name: Build multi version
-      if: github.event.inputs.version_type != 'basic'
+      if: ${{ github.event.inputs.version_type != 'basic' }}
       run: |
         export GOOS=android
         export GOARCH=${{ matrix.goarch }}
@@ -127,33 +121,6 @@ EOF
   "changelog": "https://github.com/045200/EZ-Clean/releases/tag/v${GITHUB_REF#refs/tags/v}"
 }
 EOF
-
-    - name: Create installation scripts
-      run: |
-        # Create update-binary for Magisk
-        for dir in build/*/; do
-          cat > "$dir/META-INF/com/google/android/update-binary" << 'EOF'
-#!/sbin/sh
-umask 022
-ui_print() { echo "$1"; }
-require_new_magisk() {
-  ui_print "*******************************"
-  ui_print "EZ-Clean Module Installer "
-  ui_print "*******************************"
-}
-require_new_magisk
-ui_print "- Mounting system"
-mount /system 2>/dev/null
-ui_print "- Installing module files"
-mkdir -p $MODPATH
-cp -rf $(dirname $0)/../../* $MODPATH/
-ui_print "- Setting permissions"
-set_perm_recursive $MODPATH/EZ 0 0 0755 0755
-ui_print "- Installation complete"
-EOF
-          
-          chmod +x "$dir/META-INF/com/google/android/update-binary"
-        done
 
     - name: Package modules
       run: |
@@ -201,10 +168,8 @@ EOF
           - **multi** 为高级款，包含基础功能和系统感知、程序健康报告、性能指标、系统自适应等特殊功能。
           
           ### 支持架构
-          - arm64 (大多数现代Android设备)
-          - arm (旧款Android设备)  
-          - x86 (Android模拟器、Intel设备)
-          - x86_64 (64位Intel设备)
+          - arm64-v8a (第8代64位ARM处理器，兼容32位，性能更高，新设备标配)
+          - armeabi-v7a (第7代ARM处理器，支持硬件浮点运算，主流设备采用)
           
           ### 安装说明
           1. 下载对应架构的zip文件
