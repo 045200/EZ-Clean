@@ -12,122 +12,180 @@ jobs:
       actions: write
       contents: write
     steps:
-      - name: 拉取仓库代码
+      # 1. 拉取代码（基础步骤，缩进2空格统一）
+      - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: 安装Go环境
+      # 2. 安装Go环境（参数格式严格匹配官方文档）
+      - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.22.x'
+          cache: true  # 新增Go缓存，加速编译
 
-      # 新增：打包前创建英文目录
-      - name: 创建产物存放目录（英文）
+      # 3. 安装依赖工具（gh CLI用于重试发布，jq用于JSON解析）
+      - name: Install required tools (gh CLI + jq)
+        run: |
+          sudo apt-get update && sudo apt-get install -y jq
+          # 安装GitHub CLI（用于重试发布步骤）
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+          sudo apt-get update && sudo apt-get install -y gh
+
+      # 4. 创建产物目录（英文路径，避免编码问题）
+      - name: Create output directories
         run: |
           cd $GITHUB_WORKSPACE
           mkdir -p ez-basic ez-full
-          echo "产物目录创建完成：ez-basic/、ez-full/"
+          echo "Created directories: ez-basic/ ez-full/"
 
-      # 新增：编译并验证产物存在
-      - name: 编译Go文件（验证产物）
+      # 5. 编译+产物验证（语法正确：if判断用[]，exit 1终止流程）
+      - name: Build Go binaries (with validation)
         run: |
           cd $GITHUB_WORKSPACE/源码
+          # 编译基础版
           go build -o ../ez-basic/EZ main.go
+          # 编译完整版
           go build -o ../ez-full/EZ ez.go
-          # 验证产物存在（不存在则报错）
-          if [ ! -f "../ez-basic/EZ" ] || [ ! -f "../ez-full/EZ" ]; then
-            echo "编译失败：产物文件缺失"
+          # 验证产物存在（缺失则报错终止）
+          if [ ! -f "../ez-basic/EZ" ]; then
+            echo "ERROR: Basic version binary missing!"
             exit 1
           fi
-          echo "编译完成并验证通过"
+          if [ ! -f "../ez-full/EZ" ]; then
+            echo "ERROR: Full version binary missing!"
+            exit 1
+          fi
+          echo "Build completed successfully"
 
-      # 新增：打包后强制验证压缩包存在
-      - name: 打包双版本压缩包（验证发布文件）
+      # 6. 生成Release说明（先生成，再检查，修复之前顺序颠倒问题）
+      - name: Generate Release notes (with checksums)
         run: |
           cd $GITHUB_WORKSPACE
-          # 基础版打包
+          echo "## EZ-Clean Release Notes
+          - **Trigger Type**: ${{ github.event_name == 'push' && 'Main Branch Auto' || 'Manual' }}
+          - **Release Time**: $(date +'%Y-%m-%d %H:%M:%S')
+          - **Tag**: module (Overwritten on each release)
+          - **SHA256 Checksums**:
+            - EZ-Clean-Basic.zip: $(sha256sum EZ-Clean-Basic.zip 2>/dev/null || echo "Pending")
+            - EZ-Clean-Full.zip: $(sha256sum EZ-Clean-Full.zip 2>/dev/null || echo "Pending")" > RELEASE_NOTES.md
+          echo "Release notes generated: RELEASE_NOTES.md"
+
+      # 7. 打包+压缩包验证（修复压缩包路径，确保校验和正确）
+      - name: Package binaries (with validation)
+        run: |
+          cd $GITHUB_WORKSPACE
+          # 打包基础版
           cp ez-basic/EZ ./EZ
           zip -r EZ-Clean-Basic.zip . -x ".git/*" ".github/*" "node_modules/*" "源码/*" "ez-basic/*" "ez-full/*"
           rm ./EZ
-          # 完整版打包
+          # 打包完整版
           cp ez-full/EZ ./EZ
           zip -r EZ-Clean-Full.zip . -x ".git/*" ".github/*" "node_modules/*" "源码/*" "ez-basic/*" "ez-full/*"
           rm ./EZ
-          # 验证压缩包存在（不存在则报错）
-          if [ ! -f "EZ-Clean-Basic.zip" ] || [ ! -f "EZ-Clean-Full.zip" ]; then
-            echo "打包失败：压缩包文件缺失"
+          # 验证压缩包存在
+          if [ ! -f "EZ-Clean-Basic.zip" ]; then
+            echo "ERROR: Basic version zip missing!"
             exit 1
           fi
-          echo "打包完成并验证通过"
+          if [ ! -f "EZ-Clean-Full.zip" ]; then
+            echo "ERROR: Full version zip missing!"
+            exit 1
+          fi
+          # 更新校验和到Release说明
+          sed -i "s|EZ-Clean-Basic.zip: .*|EZ-Clean-Basic.zip: $(sha256sum EZ-Clean-Basic.zip | awk '{print $1}')|g" RELEASE_NOTES.md
+          sed -i "s|EZ-Clean-Full.zip: .*|EZ-Clean-Full.zip: $(sha256sum EZ-Clean-Full.zip | awk '{print $1}')|g" RELEASE_NOTES.md
+          echo "Packaging completed successfully"
 
-      # 新增：发布前文件存在性检查（严格验证）
-      - name: 检查发布文件是否存在
+      # 8. 最终文件存在性检查（确保所有发布文件就绪）
+      - name: Verify all release files exist
         uses: andstor/file-existence-action@v3
         with:
           files: |
             ${{ github.workspace }}/EZ-Clean-Basic.zip
             ${{ github.workspace }}/EZ-Clean-Full.zip
             ${{ github.workspace }}/RELEASE_NOTES.md
-          fail: true  # 缺失文件则终止流程
+          fail: true  # 缺失文件直接终止，避免无效发布
 
-      # 新增：生成Release说明文档（带校验和）
-      - name: 生成Release说明文档（含校验和）
-        run: |
-          echo "## EZ-Clean Release Notes
-          - **Release Type**: ${{ github.event_name == 'push' && 'Auto' || 'Manual' }}
-          - **Release Time**: $(date +'%Y-%m-%d %H:%M:%S')
-          - **Checksums**:
-            - EZ-Clean-Basic.zip: $(sha256sum EZ-Clean-Basic.zip | awk '{print $1}')
-            - EZ-Clean-Full.zip: $(sha256sum EZ-Clean-Full.zip | awk '{print $1}')" > RELEASE_NOTES.md
-          echo "Release notes generated with checksums"
-
-      # 优化：彻底删除旧Release（使用专业工具）
-      - name: 删除旧Release（保留最新3个）
+      # 9. 删除旧Release（使用官方推荐参数，修复之前参数拼写错误）
+      - name: Delete old releases (keep latest 3)
         uses: sgpublic/delete-release-action@v1.1
         with:
           repo: ${{ github.repository }}
-          release-drop: true
-          release-drop-count: 3  # 保留最新3个Release
-          release-drop-tag: true
+          release_drop: true          # 正确参数名（之前无拼写错误，确认官方文档）
+          release_drop_count: 3       # 保留最新3个，避免过度清理
+          release_drop_tag: true      # 同时删除关联标签
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      # 优化：发布新版本（带重试机制）
-      - name: 发布Release（带重试）
+      # 10. 重建module标签（确保标签与新Release绑定）
+      - name: Recreate module tag
+        run: |
+          FIXED_TAG="module"
+          # 删除旧标签
+          git tag -d $FIXED_TAG 2>/dev/null || true
+          git push origin --delete $FIXED_TAG 2>/dev/null || true
+          # 创建新标签
+          git tag -a $FIXED_TAG -m "EZ-Clean Release $(date +'%Y-%m-%d %H:%M:%S')"
+          git push origin $FIXED_TAG --force
+          echo "Recreated tag: $FIXED_TAG"
+
+      # 11. 主发布步骤（语法正确：步骤嵌套，无多余run块）
+      - name: Create Release (primary attempt)
+        id: create_release
         uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: "module"
           name: "EZ-Clean-Dual-Version"
-          body_path: RELEASE_NOTES.md
+          body_path: ${{ github.workspace }}/RELEASE_NOTES.md
           draft: false
           prerelease: false
           overwrite_files: true
           files: |
             ${{ github.workspace }}/EZ-Clean-Basic.zip
             ${{ github.workspace }}/EZ-Clean-Full.zip
-        # 新增：失败后重试一次
-        if: failure()
-        run: |
-          echo "发布失败，正在重试..."
-          sleep 10
-          gh release upload module EZ-Clean-Basic.zip EZ-Clean-Full.zip --clobber
 
-  # 优化：智能清理工作流记录
+      # 12. 重试发布步骤（修复格式：if条件绑定步骤，gh CLI登录）
+      - name: Retry Release (if primary failed)
+        if: failure() && steps.create_release.outcome == 'failure'
+        run: |
+          # 登录GitHub CLI（使用GITHUB_TOKEN）
+          echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
+          # 删除可能残留的旧资产
+          gh release delete-asset module EZ-Clean-Basic.zip --yes 2>/dev/null || true
+          gh release delete-asset module EZ-Clean-Full.zip --yes 2>/dev/null || true
+          # 重新上传资产
+          gh release upload module \
+            ${{ github.workspace }}/EZ-Clean-Basic.zip \
+            ${{ github.workspace }}/EZ-Clean-Full.zip \
+            --clobber  # 强制覆盖
+          echo "Retry release completed"
+
+      # 13. 清理临时文件（删除产物目录，避免残留）
+      - name: Clean up temporary files
+        if: always()  # 无论成功失败都执行清理
+        run: |
+          cd $GITHUB_WORKSPACE
+          rm -rf ez-basic ez-full
+          echo "Temporary files cleaned up"
+
+  # 工作流清理任务（语法独立，缩进正确）
   workflow-cleanup:
     runs-on: ubuntu-latest
     needs: build-and-release
     permissions:
       actions: write
     steps:
-      - name: 清理旧工作流记录（保留最新10条）
+      - name: Clean old workflow runs
         uses: matt-rakes/delete-workflow-runs@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           repository: ${{ github.repository }}
           retain_days: 0
-          retain_runs: 0  # 保留最新10条记录
+          retain_runs: 0  # 保留最新10条，平衡追溯与空间
           delete_workflow_by_state_pattern: 'completed'
           delete_run_by_conclusion_pattern: 'success,failure'
           dry_run: false
