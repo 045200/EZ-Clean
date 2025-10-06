@@ -91,7 +91,7 @@ jobs:
           cp reload.sh module-basic/ 2>/dev/null || true
           cp blacklist.conf module-basic/ 2>/dev/null || true
           cp whitelist.conf module-basic/ 2>/dev/null || true
-          cp MTW.conf module-basic/ 2>/dev/null || true
+          cp MT.conf module-basic/ 2>/dev/null || true
           cp config.conf module-basic/ 2>/dev/null || true
           # 复制基础版二进制程序
           cp EZ-basic module-basic/EZ
@@ -107,7 +107,7 @@ jobs:
           cp reload.sh module-full/ 2>/dev/null || true
           cp blacklist.conf module-full/ 2>/dev/null || true
           cp whitelist.conf module-full/ 2>/dev/null || true
-          cp MTW.conf module-full/ 2>/dev/null || true
+          cp MT.conf module-full/ 2>/dev/null || true
           cp config.conf module-full/ 2>/dev/null || true
           # 复制完整版二进制程序
           cp EZ-full module-full/EZ
