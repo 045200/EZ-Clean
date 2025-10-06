@@ -153,10 +153,14 @@ jobs:
           cp module.prop module-${{ matrix.variant }}-${{ matrix.arch }}/
           cp customize.sh module-${{ matrix.variant }}-${{ matrix.arch }}/ 2>/dev/null || true
           cp service.sh module-${{ matrix.variant }}-${{ matrix.arch }}/ 2>/dev/null || true
+<<<<<<< HEAD
           cp *.conf module-${{ matrix.variant }}-${{ matrix.arch }}/ 2>/dev/null || true
+          cp reload.sh module-${{ matrix.variant }}-${{ matrix.arch }}/ 2>/dev/null || true
+=======
           cp reload.sh module-${{ matrix.variant }}-${{ matrix.arch }}/ 2>/dev/null || true
           cp *.conf module-${{ matrix.variant }}-${{ matrix.arch }}/ 2>/dev/null || true
           
+>>>>>>> bf80d55 (更新工作流及仓库架构)
           # 复制对应的二进制文件并重命名
           cp ${{ steps.arch_env.outputs.BINARY_NAME }} module-${{ matrix.variant }}-${{ matrix.arch }}/EZ
           chmod +x module-${{ matrix.variant }}-${{ matrix.arch }}/EZ
