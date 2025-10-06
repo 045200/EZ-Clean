@@ -73,7 +73,7 @@ EZ-Clean 是一款专为 **Root 后的 Android 设备**设计的智能清理工�
 /data/adb/modules/EZ-Clean/          # 模块核心目录（系统级，不可修改）
 └── EZ                         # EZ-Clean 主程序（二进制文件）
 /storage/emulated/0/Android/EZ-Clean/ # 数据目录（用户可访问）
-├── config.json                      # 核心配置文件（可自定义参数）
+├── config.conf                      # 核心配置文件（可自定义参数）
 ├── blacklist.conf                   # 清理黑名单（定义需清理路径）
 ├── whitelist.conf                   # 保护白名单（定义不清理路径）
 ├── MT.conf                          # MT 触发清理名单（针对性清理规则）
