@@ -157,9 +157,16 @@ jobs:
         cd build
         for dir in */; do
           if [ -d "$dir" ]; then
-            zip_name=$(basename "${dir%/}").zip
-            echo "Packaging $dir to $zip_name"
-            zip -r "$zip_name" "$dir"
+            # 移除末尾的斜杠获取目录名
+            dir_name=$(basename "${dir%/}")
+            zip_name="${dir_name}.zip"
+            echo "Packaging contents of $dir to $zip_name"
+            
+            # 进入目录并打包其内容，而不是打包目录本身
+            cd "$dir_name"
+            zip -r "../$zip_name" .
+            cd ..
+            
             echo "Created: $zip_name"
           fi
         done
