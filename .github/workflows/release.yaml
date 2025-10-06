@@ -5,12 +5,17 @@ on:
     tags: ['v*']
   workflow_dispatch:
     inputs:
-      version_type:
-        description: 'Version type'
+      release_version:
+        description: 'Release version (e.g., v1.0.0)'
         required: true
-        default: 'basic'
+        type: string
+        default: 'v1.0.0'
+      build_type:
+        description: 'Build type'
+        required: true
         type: choice
         options:
+          - all
           - basic
           - multi
 
@@ -24,12 +29,28 @@ jobs:
     strategy:
       matrix:
         include:
+          # Basic version builds
           - arch: arm64
             goarch: arm64
             cc: aarch64-linux-android24-clang
+            module_type: basic
+            source_file: main.go
           - arch: arm
             goarch: arm
             cc: armv7a-linux-androideabi24-clang
+            module_type: basic
+            source_file: main.go
+          # Multi version builds  
+          - arch: arm64
+            goarch: arm64
+            cc: aarch64-linux-android24-clang
+            module_type: multi
+            source_file: ez.go
+          - arch: arm
+            goarch: arm
+            cc: armv7a-linux-androideabi24-clang
+            module_type: multi
+            source_file: ez.go
 
     steps:
     - name: Checkout repository
@@ -48,101 +69,133 @@ jobs:
         echo "NDK_HOME=$PWD/android-ndk-${{ env.NDK_VERSION }}" >> $GITHUB_ENV
         echo "$PWD/android-ndk-${{ env.NDK_VERSION }}/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
 
-    - name: Build basic version
-      if: ${{ github.event.inputs.version_type != 'multi' }}
+    - name: Determine version
+      id: version
       run: |
-        export GOOS=android
-        export GOARCH=${{ matrix.goarch }}
-        export CC=${{ matrix.cc }}
-        export CGO_ENABLED=1
-        
-        cd source
-        go build -ldflags="-s -w" -o ../EZ main.go
-        cd ..
-        
-        mkdir -p build/basic_${{ matrix.arch }}
-        cp -r META-INF whitelist.conf blacklist.conf MT.conf service.sh customize.sh reload.sh config.conf build/basic_${{ matrix.arch }}/
-        cp EZ build/basic_${{ matrix.arch }}/
-        
-        # Copy module.prop and update.json from repository
-        cp basic/module.prop build/basic_${{ matrix.arch }}/
-        cp basic/update.json build/basic_${{ matrix.arch }}/
-        
-        # Update version in module.prop
-        sed -i "s/version=.*/version=v${GITHUB_REF#refs/tags/v}/" build/basic_${{ matrix.arch }}/module.prop
-        sed -i "s/versionCode=.*/versionCode=1/" build/basic_${{ matrix.arch }}/module.prop
-        
-        # Update version and zipUrl in update.json
-        sed -i "s/\"version\": \".*\"/\"version\": \"v${GITHUB_REF#refs/tags/v}\"/" build/basic_${{ matrix.arch }}/update.json
-        sed -i "s/\"versionCode\": [0-9]*/\"versionCode\": 1/" build/basic_${{ matrix.arch }}/update.json
-        sed -i "s|EZ-Clean-basic-.*\\.zip|EZ-Clean-basic-${{ matrix.arch }}.zip|" build/basic_${{ matrix.arch }}/update.json
+        if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+          echo "VERSION=${{ github.event.inputs.release_version }}" >> $GITHUB_OUTPUT
+        else
+          echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        fi
+        echo "Using version: ${{ steps.version.outputs.VERSION }}"
 
-    - name: Build multi version
-      if: ${{ github.event.inputs.version_type != 'basic' }}
+    - name: Check build condition
+      id: check_build
+      run: |
+        if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+          if [[ "${{ github.event.inputs.build_type }}" == "all" || "${{ github.event.inputs.build_type }}" == "${{ matrix.module_type }}" ]]; then
+            echo "should_build=true" >> $GITHUB_OUTPUT
+          else
+            echo "should_build=false" >> $GITHUB_OUTPUT
+          fi
+        else
+          echo "should_build=true" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Build module
+      if: steps.check_build.outputs.should_build == 'true'
       run: |
         export GOOS=android
         export GOARCH=${{ matrix.goarch }}
         export CC=${{ matrix.cc }}
         export CGO_ENABLED=1
         
+        # Build Go binary
         cd source
-        go build -ldflags="-s -w" -o ../EZ ez.go
+        go build -ldflags="-s -w" -o ../EZ ${{ matrix.source_file }}
         cd ..
         
-        mkdir -p build/multi_${{ matrix.arch }}
-        cp -r META-INF whitelist.conf blacklist.conf MT.conf service.sh customize.sh reload.sh config.conf build/multi_${{ matrix.arch }}/
-        cp EZ build/multi_${{ matrix.arch }}/
+        # Create build directory
+        mkdir -p build/${{ matrix.module_type }}_${{ matrix.arch }}
         
-        # Copy module.prop and update.json from repository
-        cp multi/module.prop build/multi_${{ matrix.arch }}/
-        cp multi/update.json build/multi_${{ matrix.arch }}/
+        # Copy common files
+        cp -r META-INF whitelist.conf blacklist.conf MT.conf service.sh customize.sh reload.sh config.conf build/${{ matrix.module_type }}_${{ matrix.arch }}/
+        cp EZ build/${{ matrix.module_type }}_${{ matrix.arch }}/
         
-        # Update version in module.prop
-        sed -i "s/version=.*/version=v${GITHUB_REF#refs/tags/v}/" build/multi_${{ matrix.arch }}/module.prop
-        sed -i "s/versionCode=.*/versionCode=1/" build/multi_${{ matrix.arch }}/module.prop
+        # Copy and update module.prop
+        cp ${{ matrix.module_type }}/module.prop build/${{ matrix.module_type }}_${{ matrix.arch }}/
         
-        # Update version and zipUrl in update.json
-        sed -i "s/\"version\": \".*\"/\"version\": \"v${GITHUB_REF#refs/tags/v}\"/" build/multi_${{ matrix.arch }}/update.json
-        sed -i "s/\"versionCode\": [0-9]*/\"versionCode\": 1/" build/multi_${{ matrix.arch }}/update.json
-        sed -i "s|EZ-Clean-multi-.*\\.zip|EZ-Clean-multi-${{ matrix.arch }}.zip|" build/multi_${{ matrix.arch }}/update.json
+        # Use alternative sed delimiter to avoid issues with forward slashes
+        sed -i "s|version=.*|version=${{ steps.version.outputs.VERSION }}|" build/${{ matrix.module_type }}_${{ matrix.arch }}/module.prop
+        sed -i "s|versionCode=.*|versionCode=1|" build/${{ matrix.module_type }}_${{ matrix.arch }}/module.prop
+        
+        # Copy and update update.json
+        cp ${{ matrix.module_type }}/update.json build/${{ matrix.module_type }}_${{ matrix.arch }}/
+        
+        # Use jq for JSON manipulation if available, otherwise use sed
+        if command -v jq &> /dev/null; then
+          jq --arg version "${{ steps.version.outputs.VERSION }}" \
+             --arg zipUrl "https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/EZ-Clean-${{ matrix.module_type }}-${{ matrix.arch }}.zip" \
+             '.version = $version | .versionCode = 1 | .zipUrl = $zipUrl' \
+             build/${{ matrix.module_type }}_${{ matrix.arch }}/update.json > temp.json && \
+          mv temp.json build/${{ matrix.module_type }}_${{ matrix.arch }}/update.json
+        else
+          sed -i "s|\"version\": \".*\"|\"version\": \"${{ steps.version.outputs.VERSION }}\"|" build/${{ matrix.module_type }}_${{ matrix.arch }}/update.json
+          sed -i "s|\"versionCode\": [0-9]*|\"versionCode\": 1|" build/${{ matrix.module_type }}_${{ matrix.arch }}/update.json
+          sed -i "s|EZ-Clean-${{ matrix.module_type }}-.*\\.zip|EZ-Clean-${{ matrix.module_type }}-${{ matrix.arch }}.zip|" build/${{ matrix.module_type }}_${{ matrix.arch }}/update.json
+        fi
+        
+        echo "Built ${{ matrix.module_type }} version for ${{ matrix.arch }}"
 
     - name: Package modules
+      if: steps.check_build.outputs.should_build == 'true'
       run: |
         cd build
         for dir in */; do
-          zip_name=$(basename "${dir%/}").zip
-          zip -r "$zip_name" "$dir"
-          echo "Created: $zip_name"
+          if [ -d "$dir" ]; then
+            zip_name=$(basename "${dir%/}").zip
+            echo "Packaging $dir to $zip_name"
+            zip -r "$zip_name" "$dir"
+            echo "Created: $zip_name"
+          fi
         done
+        echo "=== Built packages ==="
         ls -la *.zip
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: EZ-Clean-modules-${{ matrix.arch }}
-        path: build/*.zip
+        name: EZ-Clean-${{ matrix.module_type }}-${{ matrix.arch }}
+        path: build/${{ matrix.module_type }}_${{ matrix.arch }}.zip
         retention-days: 1
 
   release:
     runs-on: ubuntu-latest
     needs: build
-    if: startsWith(github.ref, 'refs/tags/')
+    if: always() && (needs.build.result == 'success' || needs.build.result == 'skipped')
     
     steps:
     - name: Download all artifacts
       uses: actions/download-artifact@v4
       with:
         path: artifacts
+        pattern: EZ-Clean-*
+        merge-multiple: true
 
-    - name: List artifacts
-      run: find artifacts -name "*.zip" | sort
+    - name: Determine version
+      id: version
+      run: |
+        if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+          echo "VERSION=${{ github.event.inputs.release_version }}" >> $GITHUB_OUTPUT
+        else
+          echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        fi
+
+    - name: List downloaded artifacts
+      run: |
+        echo "=== Downloaded artifacts ==="
+        find artifacts -name "*.zip" | sort
+        echo "=== Total files ==="
+        find artifacts -name "*.zip" | wc -l
 
     - name: Create Release
+      if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
       uses: softprops/action-gh-release@v1
       with:
+        tag_name: ${{ steps.version.outputs.VERSION }}
         files: artifacts/**/*.zip
         body: |
-          # EZ-Clean Module Release
+          # EZ-Clean Module Release ${{ steps.version.outputs.VERSION }}
           
           ## 说明
           请根据CPU架构下载对应版本的模块包！支持magisk和kernelsu刷入。
@@ -159,3 +212,7 @@ jobs:
           1. 下载对应架构的zip文件
           2. 在Magisk或KernelSU中刷入
           3. 重启设备生效
+          
+          ## 构建信息
+          - 触发方式: ${{ github.event_name }}
+          - 构建时间: ${{ fromJSON(format('"{0}"', github.event.head_commit.timestamp || now())) }}
