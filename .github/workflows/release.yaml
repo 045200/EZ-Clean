@@ -255,6 +255,18 @@ jobs:
         echo "BUILD_TIME=$(date +'%Y-%m-%d %H:%M:%S %Z')" >> $GITHUB_OUTPUT
         echo "BUILD_DATE=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
 
+    - name: Determine release version
+      id: release_version
+      run: |
+        # 确保版本号不为空
+        if [[ -z "${{ needs.version-setup.outputs.version }}" ]]; then
+          echo "ERROR: Version is empty!"
+          exit 1
+        else
+          echo "Using version: ${{ needs.version-setup.outputs.version }}"
+          echo "VERSION=${{ needs.version-setup.outputs.version }}" >> $GITHUB_OUTPUT
+        fi
+
     - name: List downloaded artifacts
       run: |
         echo "=== Downloaded artifacts ==="
@@ -264,10 +276,10 @@ jobs:
       if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: ${{ needs.version-setup.outputs.version }}
+        tag_name: ${{ steps.release_version.outputs.VERSION }}
         files: artifacts/**/*.zip
         body: |
-          # EZ-Clean Module Release ${{ needs.version-setup.outputs.version }}
+          # EZ-Clean Module Release ${{ steps.release_version.outputs.VERSION }}
           
           ## 说明
           请根据CPU架构下载对应版本的模块包！支持magisk和kernelsu刷入。
@@ -288,5 +300,5 @@ jobs:
           ## 构建信息
           - 触发方式: ${{ github.event_name }}
           - 构建时间: ${{ steps.timestamp.outputs.BUILD_TIME }}
-          - 版本: ${{ needs.version-setup.outputs.version }}
+          - 版本: ${{ steps.release_version.outputs.VERSION }}
           - 版本代码: ${{ needs.version-setup.outputs.version_code }}
