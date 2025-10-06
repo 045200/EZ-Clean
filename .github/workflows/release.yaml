@@ -1,20 +1,38 @@
-name: EZ-Clean-Android10-CGO
+# GitHub Actions 工作流：为安卓平台构建多架构的 Go 应用
+#
+# 这个工作流将自动化以下流程：
+# 1. 设置构建环境，包括 Go 和安卓 NDK。
+# 2. 使用 CGO 为四种不同的安卓 ABI（arm64-v8a, armeabi-v7a, x86_64, x86）
+#    以及两种变体（basic, full）进行交叉编译。
+# 3. 将每个构建结果打包成可刷写的 Magisk 模块 Zip 包。
+# 4. 运行一个汇总任务，确保全部 8 个构建都成功。
+# 5. 当推送到 main 分支时，自动创建一个新的 GitHub Release。
+# 6. Release 中会包含所有 8 个 Magisk 模块、用于自动更新的 update.json 文件，以及详细的发布日志。
+# 7. 自动清理旧的工作流运行记录，保持仓库整洁。
+
+name: EZ-Clean-Android10-CGO-Test
 
 on:
   push:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+  # 允许在 GitHub Actions 页面手动触发此工作流
   workflow_dispatch:
 
 env:
   GO_VERSION: '1.21'
   MODULE_NAME: 'EZ-Clean'
+  # 使用较新的稳定版 NDK 以获得更好的工具链支持
+  NDK_VERSION: 'r26d'
 
 jobs:
+  # 构建核心任务，使用矩阵策略并行构建所有架构和变体
   build-multi-arch:
     runs-on: ubuntu-latest
     strategy:
+      # 构建矩阵定义了所有需要编译的架构和变体组合
+      # 这将产生 2 个变体 * 4 个架构 = 8 个并行的构建任务
       matrix:
         include:
           - goarch: arm64
@@ -30,54 +48,44 @@ jobs:
             android_abi: x86
             toolchain_triple: i686-linux-android29
         variant: [basic, full]
+      # fail-fast: false 确保即使矩阵中有一个任务失败，其他任务也会继续运行
       fail-fast: false
 
     name: Build ${{ matrix.variant }} for ${{ matrix.android_abi }}
-    permissions:
-      contents: write
 
     steps:
-      - name: Checkout code
+      - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: Set up Go
+      - name: 设置 Go 环境
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-          cache-dependency-path: |
-            go.sum
-            **/go.sum
+          cache-dependency-path: go.sum
 
-      - name: Setup Android NDK
+      - name: 设置安卓 NDK
         uses: nttld/setup-ndk@v1
         id: setup-ndk
         with:
-          ndk-version: 'r25b'
+          ndk-version: ${{ env.NDK_VERSION }}
 
-      - name: Cache Go modules
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
-
-      - name: Install basic dependencies
+      - name: 安装构建依赖
         run: |
+          set -e
           sudo apt-get update
-          sudo apt-get install -y zip file jq
+          sudo apt-get install -y zip file
 
-      - name: Initialize Go module
+      - name: 初始化 Go 模块
         run: |
+          set -e
+          # 如果 go.mod 不存在，则初始化
           if [ ! -f "go.mod" ]; then
             go mod init github.com/${{ github.repository }}
           fi
           go mod tidy
 
-      - name: Locate source files
+      - name: 定位 Go 源文件
         id: source_files
         run: |
           if [ -f "source/main.go" ]; then
@@ -87,271 +95,248 @@ jobs:
             echo "MAIN_GO=main.go" >> $GITHUB_OUTPUT
             echo "EZ_GO=ez.go" >> $GITHUB_OUTPUT
           else
-            echo "错误: 未找到Go源文件"
-            find . -name "*.go" | head -10
+            echo "错误：未找到 Go 源文件。"
             exit 1
           fi
 
-      - name: Setup build parameters
+      - name: 设置构建参数
         id: build_params
         run: |
-          echo "BINARY_NAME=EZ-${{ matrix.variant }}-${{ matrix.android_abi }}" >> $GITHUB_OUTPUT
           echo "ZIP_NAME=EZ-Clean-${{ matrix.variant }}-${{ matrix.android_abi }}.zip" >> $GITHUB_OUTPUT
           echo "MODULE_DIR=module-${{ matrix.variant }}-${{ matrix.android_abi }}" >> $GITHUB_OUTPUT
 
-      - name: Verify NDK Installation
+      - name: 验证 NDK 交叉编译器是否存在
         run: |
-          echo "NDK Path: ${{ steps.setup-ndk.outputs.NDK_PATH }}"
-          echo "NDK Contents:"
-          ls -la "${{ steps.setup-ndk.outputs.NDK_PATH }}" || echo "NDK directory not accessible"
-
-      - name: Verify NDK compiler exists
-        run: |
+          set -e
           COMPILER_PATH="${{ steps.setup-ndk.outputs.NDK_PATH }}/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.toolchain_triple }}-clang"
-          echo "Checking compiler at: $COMPILER_PATH"
-          
-          if [ -f "$COMPILER_PATH" ]; then
-            echo "✅ Compiler exists: $(ls -la "$COMPILER_PATH")"
-            echo "Compiler version:"
-            "$COMPILER_PATH" --version || echo "Compiler version check failed but file exists"
-          else
-            echo "❌ Compiler not found at expected path"
-            echo "Available compilers in directory:"
-            find "${{ steps.setup-ndk.outputs.NDK_PATH }}/toolchains/llvm/prebuilt/linux-x86_64/bin/" -name "*clang*" 2>/dev/null | head -20 || echo "Could not list compilers"
+          echo "正在检查编译器: $COMPILER_PATH"
+          if [ ! -f "$COMPILER_PATH" ]; then
+            echo "❌ 编译器未在预期路径找到！"
+            echo "正在列出可用的编译器以供调试:"
+            find "${{ steps.setup-ndk.outputs.NDK_PATH }}/toolchains/llvm/prebuilt/linux-x86_64/bin/" -name "*clang*"
             exit 1
           fi
+          echo "✅ 编译器已找到。版本信息:"
+          "$COMPILER_PATH" --version
 
-      - name: Build with CGO for Android
+      - name: 使用 CGO 交叉编译安卓二进制文件
         env:
           GOOS: android
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 1
           CC: ${{ steps.setup-ndk.outputs.NDK_PATH }}/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.toolchain_triple }}-clang
         run: |
+          set -e
+          BINARY_NAME="EZ-${{ matrix.variant }}-${{ matrix.android_abi }}"
           if [ "${{ matrix.variant }}" = "basic" ]; then
             SOURCE_FILE="${{ steps.source_files.outputs.MAIN_GO }}"
           else
             SOURCE_FILE="${{ steps.source_files.outputs.EZ_GO }}"
           fi
-          
-          echo "Building ${{ matrix.variant }} for ${{ matrix.android_abi }} (GOARCH=${{ matrix.goarch }})"
-          echo "Using compiler: $CC"
-          echo "Source file: $SOURCE_FILE"
-          
-          # 设置构建缓存路径
-          export GOCACHE="$HOME/.cache/go-build"
-          mkdir -p "$GOCACHE"
-          
-          # Build with CGO [citation:1]
-          go build -ldflags="-s -w" -o "${{ steps.build_params.outputs.BINARY_NAME }}" "$SOURCE_FILE"
-          
-          if [ -f "${{ steps.build_params.outputs.BINARY_NAME }}" ]; then
-            echo "✅ Build successful"
-            file "${{ steps.build_params.outputs.BINARY_NAME }}"
-            ls -lh "${{ steps.build_params.outputs.BINARY_NAME }}"
-          else
-            echo "❌ Build failed"
-            exit 1
-          fi
+          echo "正在编译源文件: $SOURCE_FILE"
+          go build -ldflags="-s -w" -o "$BINARY_NAME" "$SOURCE_FILE"
+          echo "✅ 编译成功。二进制文件信息:"
+          file "$BINARY_NAME"
+          ls -lh "$BINARY_NAME"
 
-      - name: Update module.prop
+      - name: 更新模块属性文件 (module.prop)
         run: |
+          set -e
+          # 备份原始文件，以便之后恢复
           if [ -f "module.prop" ]; then
             cp module.prop module.prop.backup
-            echo "architecture=${{ matrix.android_abi }}" >> module.prop
-            echo "versionCode=$(( $(date +%s) / 100 ))" >> module.prop
-            echo "updateJson=https://github.com/${{ github.repository }}/releases/latest/download/update-${{ matrix.android_abi }}.json" >> module.prop
-          else
-            cat > module.prop << EOF
-            id=EZ-Clean
-            name=EZ Clean
-            version=v1.0.0
-            versionCode=$(( $(date +%s) / 100 ))
-            author=GitHub Actions
-            description=Multi-arch EZ Clean module
-            architecture=${{ matrix.android_abi }}
-            updateJson=https://github.com/${{ github.repository }}/releases/latest/download/update-${{ matrix.android_abi }}.json
-            EOF
           fi
+          # 为当前构建生成特定的 module.prop
+          cat > module.prop << EOF
+          id=${{ env.MODULE_NAME }}
+          name=${{ env.MODULE_NAME }}
+          version=v$(date +%Y.%m.%d)
+          versionCode=$(( $(date +%s) / 100 ))
+          author=GitHub Actions
+          description=为 ${{ matrix.android_abi }} 构建的多架构模块。
+          architecture=${{ matrix.android_abi }}
+          EOF
 
-      - name: Prepare module files
+      - name: 准备模块文件
         run: |
-          mkdir -p ${{ steps.build_params.outputs.MODULE_DIR }}
+          set -e
+          BINARY_NAME="EZ-${{ matrix.variant }}-${{ matrix.android_abi }}"
+          MODULE_DIR="${{ steps.build_params.outputs.MODULE_DIR }}"
+          mkdir -p "$MODULE_DIR"
           
-          # Copy module files
-          [ -d "META-INF" ] && cp -r META-INF/ ${{ steps.build_params.outputs.MODULE_DIR }}/
-          cp module.prop ${{ steps.build_params.outputs.MODULE_DIR }}/
-          [ -f "customize.sh" ] && cp customize.sh ${{ steps.build_params.outputs.MODULE_DIR }}/
-          [ -f "service.sh" ] && cp service.sh ${{ steps.build_params.outputs.MODULE_DIR }}/
-          [ -f "reload.sh" ] && cp reload.sh ${{ steps.build_params.outputs.MODULE_DIR }}/
-          cp *.conf ${{ steps.build_params.outputs.MODULE_DIR }}/ 2>/dev/null || true
+          # 复制通用模块文件（如果存在）
+          [ -d "META-INF" ] && cp -r META-INF/ "$MODULE_DIR"/
+          [ -f "customize.sh" ] && cp customize.sh "$MODULE_DIR"/
+          [ -f "service.sh" ] && cp service.sh "$MODULE_DIR"/
           
-          # Copy binary and rename to EZ
-          cp ${{ steps.build_params.outputs.BINARY_NAME }} ${{ steps.build_params.outputs.MODULE_DIR }}/EZ
-          chmod +x ${{ steps.build_params.outputs.MODULE_DIR }}/EZ
+          # 复制生成的 module.prop 和编译好的二进制文件
+          cp module.prop "$MODULE_DIR"/
+          cp "$BINARY_NAME" "$MODULE_DIR"/EZ
+          chmod +x "$MODULE_DIR"/EZ
           
-          echo "Module files prepared:"
-          ls -la ${{ steps.build_params.outputs.MODULE_DIR }}/
+          echo "模块文件已准备就绪于 $MODULE_DIR/:"
+          ls -la "$MODULE_DIR"/
 
-      - name: Package module
+      - name: 打包模块为 Zip 文件
         run: |
+          set -e
           cd ${{ steps.build_params.outputs.MODULE_DIR }}
           zip -r ../${{ steps.build_params.outputs.ZIP_NAME }} .
           cd ..
-          echo "Packaging completed: ${{ steps.build_params.outputs.ZIP_NAME }}"
-          ls -lh *.zip
+          echo "打包完成: ${{ steps.build_params.outputs.ZIP_NAME }}"
 
-      - name: Generate update.json
-        run: |
-          TIMESTAMP=$(date +%s)
-          cat > update-${{ matrix.android_abi }}.json << EOF
-          {
-            "version": "v$(date +%Y.%m.%d)",
-            "versionCode": $(( TIMESTAMP / 100 )),
-            "zipUrl": "https://github.com/${{ github.repository }}/releases/latest/download/${{ steps.build_params.outputs.ZIP_NAME }}",
-            "changelog": "https://github.com/${{ github.repository }}/releases/tag/${GITHUB_REF_NAME:-latest}",
-            "architecture": "${{ matrix.android_abi }}"
-          }
-          EOF
-          echo "Generated update-${{ matrix.android_abi }}.json:"
-          cat update-${{ matrix.android_abi }}.json
-
-      - name: Restore module.prop
+      - name: 恢复原始 module.prop
+        if: always() # 无论成功或失败都执行此步骤
         run: |
           if [ -f "module.prop.backup" ]; then
             mv module.prop.backup module.prop
-            echo "Original module.prop restored"
+            echo "原始 module.prop 已恢复。"
           fi
 
-      - name: Upload artifacts
+      - name: 上传模块构建产物
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.variant }}-${{ matrix.android_abi }}
-          path: |
-            ${{ steps.build_params.outputs.ZIP_NAME }}
-            update-${{ matrix.android_abi }}.json
+          name: ${{ steps.build_params.outputs.ZIP_NAME }}
+          path: ${{ steps.build_params.outputs.ZIP_NAME }}
           retention-days: 7
 
-  # 新增：构建结果汇总
+  # 构建汇总任务，作为创建 Release 之前的“守门员”
   build-summary:
-    name: Build Summary
+    name: 构建结果汇总
     runs-on: ubuntu-latest
-    needs: build-multi-arch
-    if: always()
-    
+    needs: build-multi-arch # 依赖于所有构建任务
+    if: always() # 即使有构建失败也运行，以便提供汇总报告
+    outputs:
+      build_succeeded: ${{ steps.summary.outputs.build_succeeded }}
     steps:
-      - name: Download all artifacts
+      - name: 下载所有构建产物
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-          pattern: '*'
-          merge-multiple: true
           
-      - name: Show build summary
+      - name: 显示构建汇总报告
+        id: summary
         run: |
-          echo "=== Build Summary ==="
-          echo "Build completed for the following configurations:"
-          find artifacts -type f -name "*.zip" 2>/dev/null | while read file; do
-            if [ -f "$file" ]; then
-              echo "✅ $(basename "$file")"
-            fi
-          done || echo "No artifacts found"
-          echo "====================="
-          
+          set -e
+          echo "=== 构建汇总报告 ==="
           TOTAL_EXPECTED=8
-          TOTAL_BUILT=$(find artifacts -type f -name "*.zip" 2>/dev/null | wc -l)
-          echo "Total built: $TOTAL_BUILT/$TOTAL_EXPECTED"
+          TOTAL_BUILT=$(find artifacts -type f -name "*.zip" | wc -l)
           
-          if [ $TOTAL_BUILT -eq $TOTAL_EXPECTED ]; then
-            echo "🎉 All architectures built successfully!"
-          else
-            echo "⚠️  Some architectures failed to build"
+          echo "已完成的构建:"
+          find artifacts -type f -name "*.zip" -printf "✅ %f\n"
+
+          echo "====================="
+          echo "总计构建: $TOTAL_BUILT/$TOTAL_EXPECTED"
+          
+          if [ $TOTAL_BUILT -ne $TOTAL_EXPECTED ]; then
+            echo "build_succeeded=false" >> $GITHUB_OUTPUT
+            echo "⚠️ 部分构建失败。已中止发布流程。"
             exit 1
+          else
+            echo "build_succeeded=true" >> $GITHUB_OUTPUT
+            echo "🎉 所有构建均已成功！正在准备发布..."
           fi
 
+  # 创建 GitHub Release 任务
   create-release:
     runs-on: ubuntu-latest
-    needs: [build-multi-arch, build-summary]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build-summary # 依赖于汇总任务
+    # 仅当推送到 main 分支且所有构建都成功时才运行
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.build-summary.outputs.build_succeeded == 'true'
     permissions:
-      contents: write
+      contents: write # 需要此权限来创建 Release 并上传产物
+      
     steps:
-      - name: Download artifacts
+      - name: 下载所有构建产物
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-          pattern: '*'
-          merge-multiple: true
 
-      - name: Create release notes
+      - name: 准备发布所需的文件 (Release Assets)
+        id: release_assets
         run: |
-          cat > RELEASE_NOTES.md << EOF
-          # EZ-Clean Multi-Architecture Release for Android 10+
-          
-          **Build Information**
-          - Build time: $(date +'%Y-%m-%d %H:%M:%S')
-          - Commit: \`${{ github.sha }}\`
-          - Trigger: ${{ github.event_name }}
-          
-          ## Supported CPU Architectures
-          | Architecture | Supported Devices | Android 10+ Compatibility |
-          |--------------|-------------------|--------------------------|
-          | **arm64-v8a** | Modern 64-bit ARM devices | ✅ Fully compatible |
-          | **armeabi-v7a** | Legacy 32-bit ARM devices | ✅ Compatible |
-          | **x86_64** | 64-bit Intel/AMD devices | ✅ Compatible |
-          | **x86** | 32-bit Intel devices | ✅ Compatible |
-          
-          ## Version Information
-          - **Basic**: Core cleaning functionality, smaller size
-          - **Full**: Extended feature set, comprehensive functionality
-          
-          ## File List
-          $(echo -e "\n")
-          $(for file in artifacts/*.zip; do
-            if [ -f "$file" ]; then
-              SIZE=\$(du -h "$file" | cut -f1)
-              echo "  - **\$(basename \$file)** (\$SIZE)"
-            fi
-          done)
-          
-          ## Installation Guide
-          1. **Determine device architecture**: Use apps like CPU-Z to check your device architecture
-          2. **Select matching version**: Download the version that matches your device architecture
-          3. **Flash module**: Install the module in Magisk/KernelSU
-          4. **Reboot device**: Enable module functionality
-          5. **Enjoy auto-updates**: Future updates can be installed directly from within the app
-          
-          **Note**: Installing versions for incompatible architectures may cause module malfunction!
-          EOF
-          
-          echo "Release notes generated"
+          set -e
+          # 将所有 zip 文件从子目录移动到顶层 artifacts 目录
+          find artifacts -type f -name "*.zip" -exec mv {} artifacts/ \;
 
-      - name: Create GitHub Release
+          TAG_NAME="android10-$(date +'%Y.%m.%d-%H%M')"
+          RELEASE_NAME="${{ env.MODULE_NAME }} 安卓 10+ | $(date +'%Y.%m.%d')"
+          VERSION_CODE=$(( $(date +%s) / 100 ))
+
+          echo "TAG_NAME=${TAG_NAME}" >> $GITHUB_OUTPUT
+          echo "RELEASE_NAME=${RELEASE_NAME}" >> $GITHUB_OUTPUT
+          
+          # 为每个架构生成 update.json 文件
+          for zip_file in artifacts/*.zip; do
+            BASENAME=$(basename "$zip_file" .zip)
+            ABI=$(echo "$BASENAME" | sed -E 's/.*-(arm64-v8a|armeabi-v7a|x86_64|x86)$/\1/')
+            JSON_FILE="artifacts/update-${ABI}.json"
+            cat > "$JSON_FILE" << EOF
+            {
+              "version": "v$(date +%Y.%m.%d)",
+              "versionCode": ${VERSION_CODE},
+              "zipUrl": "https://github.com/${{ github.repository }}/releases/download/${TAG_NAME}/$(basename "$zip_file")",
+              "changelog": "https://github.com/${{ github.repository }}/releases/tag/${TAG_NAME}"
+            }
+EOF
+          done
+
+          # 生成发布日志 (Release Notes)
+          # !! 已修复此处的 YAML 语法错误 !!
+          NOTES_FILE="artifacts/RELEASE_NOTES.md"
+          {
+            echo "# ${{ env.MODULE_NAME }} 多架构发布版"
+            echo "**构建时间**: $(date +'%Y-%m-%d %H:%M:%S UTC')"
+            echo "**代码提交**: \`${{ github.sha }}\`"
+            echo ""
+            echo "此版本为所有主流安卓 CPU 架构提供了构建。请安装与您设备架构相匹配的模块。"
+            echo ""
+            echo "### 安装指南"
+            echo "1. 使用类似 CPU-Z 的应用检查您设备的 ABI（架构）。"
+            echo "2. 从下方的附件中下载匹配的 Zip 文件。"
+            echo "3. 通过 Magisk 或 KernelSU 刷入模块并重启。"
+            echo ""
+            echo "### 文件列表"
+            echo ""
+            echo "#### 基础版 (核心功能)"
+            echo "| 架构 | 大小 |"
+            echo "| :--- | :--- |"
+            find artifacts -name "EZ-Clean-basic-*.zip" -print0 | sort -z | while IFS= read -r -d '' file; do
+                SIZE=$(du -h "$file" | cut -f1); ARCH=$(basename "$file" .zip | sed -E 's/.*-(arm64-v8a|armeabi-v7a|x86_64|x86)$/\1/')
+                echo "| \`$ARCH\` | \`$SIZE\` |"
+            done
+            echo ""
+            echo "#### 完整版 (扩展功能)"
+            echo "| 架构 | 大小 |"
+            echo "| :--- | :--- |"
+            find artifacts -name "EZ-Clean-full-*.zip" -print0 | sort -z | while IFS= read -r -d '' file; do
+                SIZE=$(du -h "$file" | cut -f1); ARCH=$(basename "$file" .zip | sed -E 's/.*-(arm64-v8a|armeabi-v7a|x86_64|x86)$/\1/')
+                echo "| \`$ARCH\` | \`$SIZE\` |"
+            done
+          } > "$NOTES_FILE"
+
+      - name: 创建 GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: "android10-$(date +%Y%m%d-%H%M%S)"
-          name: "EZ-Clean Android 10+ Version $(date +'%Y.%m.%d')"
-          body_path: RELEASE_NOTES.md
-          draft: false
-          prerelease: false
-          files: |
-            artifacts/*.zip
-            artifacts/*.json
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          tag_name: ${{ steps.release_assets.outputs.TAG_NAME }}
+          name: ${{ steps.release_assets.outputs.RELEASE_NAME }}
+          body_path: artifacts/RELEASE_NOTES.md
+          files: artifacts/*
 
+  # 清理旧的工作流运行记录
   workflow-cleanup:
     runs-on: ubuntu-latest
     needs: create-release
-    if: always() && needs.create-release.result != 'skipped'
+    if: always() && github.ref == 'refs/heads/main'
     permissions:
-      actions: write
+      actions: write # !! 此处添加了必需的权限 !!
     steps:
-      - name: Clean old workflow runs
+      - name: 清理旧的工作流运行记录
         uses: Mattraks/delete-workflow-runs@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           repository: ${{ github.repository }}
           retain_days: 0
-          retain_runs: 1
           keep_minimum_runs: 0
+
+
