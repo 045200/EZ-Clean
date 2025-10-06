@@ -11,8 +11,8 @@ on:
         default: 'basic'
         type: choice
         options:
-        - basic
-        - multi
+          - basic
+          - multi
 
 env:
   GO_VERSION: '1.21'
@@ -27,19 +27,15 @@ jobs:
           - arch: arm64
             goarch: arm64
             cc: aarch64-linux-android24-clang
-            cxx: aarch64-linux-android24-clang++
           - arch: arm
             goarch: arm
             cc: armv7a-linux-androideabi24-clang
-            cxx: armv7a-linux-androideabi24-clang++
           - arch: x86
             goarch: 386
             cc: i686-linux-android24-clang
-            cxx: i686-linux-android24-clang++
           - arch: x86_64
             goarch: amd64
             cc: x86_64-linux-android24-clang
-            cxx: x86_64-linux-android24-clang++
 
     steps:
     - name: Checkout repository
@@ -64,7 +60,6 @@ jobs:
         export GOOS=android
         export GOARCH=${{ matrix.goarch }}
         export CC=${{ matrix.cc }}
-        export CXX=${{ matrix.cxx }}
         export CGO_ENABLED=1
         
         cd source
@@ -77,24 +72,24 @@ jobs:
         
         # Generate module.prop for basic version
         cat > build/basic_${{ matrix.arch }}/module.prop << EOF
-        id=EZ-Clean-basic
-        name=EZ Clean (Basic)
-        version=v${GITHUB_REF#refs/tags/v}
-        versionCode=1
-        author=EZ-Team
-        description=Basic cleaning functionality with system perception
-        support=https://github.com/your-repo
-        EOF
+id=EZ-Clean-basic
+name=EZ Clean (Basic)
+version=v${GITHUB_REF#refs/tags/v}
+versionCode=1
+author=EZ-Team
+description=Basic cleaning functionality with system perception
+support=https://github.com/045200
+EOF
         
         # Generate update.json
         cat > build/basic_${{ matrix.arch }}/update.json << EOF
-        {
-          "version": "v${GITHUB_REF#refs/tags/v}",
-          "versionCode": 1,
-          "zipUrl": "https://github.com/your-username/your-repo/releases/download/v${GITHUB_REF#refs/tags/v}/EZ-Clean-basic-${{ matrix.arch }}.zip",
-          "changelog": "https://github.com/your-username/your-repo/releases/tag/v${GITHUB_REF#refs/tags/v}"
-        }
-        EOF
+{
+  "version": "v${GITHUB_REF#refs/tags/v}",
+  "versionCode": 1,
+  "zipUrl": "https://github.com/your-username/your-repo/releases/download/v${GITHUB_REF#refs/tags/v}/EZ-Clean-basic-${{ matrix.arch }}.zip",
+  "changelog": "https://github.com/045200/EZ-Clean/releases/tag/v${GITHUB_REF#refs/tags/v}"
+}
+EOF
 
     - name: Build multi version
       if: github.event.inputs.version_type != 'basic' || github.event.inputs.version_type == 'multi'
@@ -102,7 +97,6 @@ jobs:
         export GOOS=android
         export GOARCH=${{ matrix.goarch }}
         export CC=${{ matrix.cc }}
-        export CXX=${{ matrix.cxx }}
         export CGO_ENABLED=1
         
         cd source
@@ -115,57 +109,59 @@ jobs:
         
         # Generate module.prop for multi version
         cat > build/multi_${{ matrix.arch }}/module.prop << EOF
-        id=EZ-Clean-multi
-        name=EZ Clean (Multi)
-        version=v${GITHUB_REF#refs/tags/v}
-        versionCode=1
-        author=EZ-Team
-        description=Advanced cleaning with health reports, metrics and adaptive features
-        support=https://github.com/your-repo
-        EOF
+id=EZ-Clean-multi
+name=EZ Clean (Multi)
+version=v${GITHUB_REF#refs/tags/v}
+versionCode=1
+author=EZ-Team
+description=Advanced cleaning with health reports, metrics and adaptive features
+support=https://github.com/045200
+EOF
         
         # Generate update.json
         cat > build/multi_${{ matrix.arch }}/update.json << EOF
-        {
-          "version": "v${GITHUB_REF#refs/tags/v}",
-          "versionCode": 1,
-          "zipUrl": "https://github.com/your-username/your-repo/releases/download/v${GITHUB_REF#refs/tags/v}/EZ-Clean-multi-${{ matrix.arch }}.zip",
-          "changelog": "https://github.com/your-username/your-repo/releases/tag/v${GITHUB_REF#refs/tags/v}"
-        }
-        EOF
+{
+  "version": "v${GITHUB_REF#refs/tags/v}",
+  "versionCode": 1,
+  "zipUrl": "https://github.com/045200/EZ-Clean/releases/download/v${GITHUB_REF#refs/tags/v}/EZ-Clean-multi-${{ matrix.arch }}.zip",
+  "changelog": "https://github.com/045200/EZ-Clean/releases/tag/v${GITHUB_REF#refs/tags/v}"
+}
+EOF
 
     - name: Create installation scripts
       run: |
         # Create update-binary for Magisk
         for dir in build/*/; do
-          cat > $dir/META-INF/com/google/android/update-binary << 'EOF'
-          #!/sbin/sh
-          umask 022
-          ui_print() { echo "$1"; }
-          require_new_magisk() {
-            ui_print "*******************************"
-            ui_print " EZ-Clean Module Installer "
-            ui_print "*******************************"
-          }
-          require_new_magisk
-          ui_print "- Mounting system"
-          mount /system 2>/dev/null
-          ui_print "- Installing module files"
-          mkdir -p $MODPATH
-          cp -rf $(dirname $0)/../../* $MODPATH/
-          ui_print "- Setting permissions"
-          set_perm_recursive $MODPATH/EZ 0 0 0755 0755
-          ui_print "- Installation complete"
-          EOF
+          cat > "$dir/META-INF/com/google/android/update-binary" << 'EOF'
+#!/sbin/sh
+umask 022
+ui_print() { echo "$1"; }
+require_new_magisk() {
+  ui_print "*******************************"
+  ui_print " EZ-Clean Module Installer "
+  ui_print "*******************************"
+}
+require_new_magisk
+ui_print "- Mounting system"
+mount /system 2>/dev/null
+ui_print "- Installing module files"
+mkdir -p $MODPATH
+cp -rf $(dirname $0)/../../* $MODPATH/
+ui_print "- Setting permissions"
+set_perm_recursive $MODPATH/EZ 0 0 0755 0755
+ui_print "- Installation complete"
+EOF
           
-          chmod +x $dir/META-INF/com/google/android/update-binary
+          chmod +x "$dir/META-INF/com/google/android/update-binary"
         done
 
     - name: Package modules
       run: |
         cd build
         for dir in */; do
-          zip -r "${dir%/}.zip" "$dir"
+          zip_name=$(basename "${dir%/}").zip
+          zip -r "$zip_name" "$dir"
+          echo "Created: $zip_name"
         done
         ls -la *.zip
 
@@ -193,8 +189,7 @@ jobs:
     - name: Create Release
       uses: softprops/action-gh-release@v1
       with:
-        files: |
-          artifacts/**/*.zip
+        files: artifacts/**/*.zip
         body: |
           # EZ-Clean Module Release
           
