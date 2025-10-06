@@ -45,12 +45,25 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
+          cache-dependency-path: |
+            go.sum
+            **/go.sum
 
       - name: Setup Android NDK
         uses: nttld/setup-ndk@v1
         id: setup-ndk
         with:
           ndk-version: 'r25b'
+
+      - name: Cache Go modules
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
 
       - name: Install basic dependencies
         run: |
@@ -85,6 +98,19 @@ jobs:
           echo "ZIP_NAME=EZ-Clean-${{ matrix.variant }}-${{ matrix.android_abi }}.zip" >> $GITHUB_OUTPUT
           echo "MODULE_DIR=module-${{ matrix.variant }}-${{ matrix.android_abi }}" >> $GITHUB_OUTPUT
 
+      - name: Verify NDK compiler exists
+        run: |
+          COMPILER_PATH="${{ steps.setup-ndk.outputs.NDK_PATH }}/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.toolchain_triple }}-clang"
+          echo "Checking compiler at: $COMPILER_PATH"
+          if [ -f "$COMPILER_PATH" ]; then
+            echo "✅ Compiler exists: $(ls -la "$COMPILER_PATH")"
+          else
+            echo "❌ Compiler not found at expected path"
+            echo "Available compilers in directory:"
+            ls "${{ steps.setup-ndk.outputs.NDK_PATH }}/toolchains/llvm/prebuilt/linux-x86_64/bin/" | grep -E "(clang$|android)" | head -10
+            exit 1
+          fi
+
       - name: Build with CGO for Android
         env:
           GOOS: android
@@ -98,17 +124,19 @@ jobs:
             SOURCE_FILE="${{ steps.source_files.outputs.EZ_GO }}"
           fi
           
-          echo "编译 ${{ matrix.variant }} 版本，架构 ${{ matrix.android_abi }}"
-          echo "使用编译器: $CC"
+          echo "Building ${{ matrix.variant }} for ${{ matrix.android_abi }} (GOARCH=${{ matrix.goarch }})"
+          echo "Using compiler: $CC"
+          echo "Source file: $SOURCE_FILE"
           
-          # 使用CGO编译[citation:1]
+          # Build with CGO [citation:1]
           go build -ldflags="-s -w" -o "${{ steps.build_params.outputs.BINARY_NAME }}" "$SOURCE_FILE"
           
           if [ -f "${{ steps.build_params.outputs.BINARY_NAME }}" ]; then
-            echo "✅ 编译成功"
+            echo "✅ Build successful"
             file "${{ steps.build_params.outputs.BINARY_NAME }}"
+            ls -lh "${{ steps.build_params.outputs.BINARY_NAME }}"
           else
-            echo "❌ 编译失败"
+            echo "❌ Build failed"
             exit 1
           fi
 
@@ -136,7 +164,7 @@ jobs:
         run: |
           mkdir -p ${{ steps.build_params.outputs.MODULE_DIR }}
           
-          # 复制模块文件
+          # Copy module files
           [ -d "META-INF" ] && cp -r META-INF/ ${{ steps.build_params.outputs.MODULE_DIR }}/
           cp module.prop ${{ steps.build_params.outputs.MODULE_DIR }}/
           [ -f "customize.sh" ] && cp customize.sh ${{ steps.build_params.outputs.MODULE_DIR }}/
@@ -144,18 +172,20 @@ jobs:
           [ -f "reload.sh" ] && cp reload.sh ${{ steps.build_params.outputs.MODULE_DIR }}/
           cp *.conf ${{ steps.build_params.outputs.MODULE_DIR }}/ 2>/dev/null || true
           
-          # 复制二进制文件并重命名为EZ
+          # Copy binary and rename to EZ
           cp ${{ steps.build_params.outputs.BINARY_NAME }} ${{ steps.build_params.outputs.MODULE_DIR }}/EZ
           chmod +x ${{ steps.build_params.outputs.MODULE_DIR }}/EZ
           
-          echo "模块文件准备完成"
+          echo "Module files prepared:"
+          ls -la ${{ steps.build_params.outputs.MODULE_DIR }}/
 
       - name: Package module
         run: |
           cd ${{ steps.build_params.outputs.MODULE_DIR }}
           zip -r ../${{ steps.build_params.outputs.ZIP_NAME }} .
           cd ..
-          echo "打包完成: ${{ steps.build_params.outputs.ZIP_NAME }}"
+          echo "Packaging completed: ${{ steps.build_params.outputs.ZIP_NAME }}"
+          ls -lh *.zip
 
       - name: Generate update.json
         run: |
@@ -169,10 +199,15 @@ jobs:
             "architecture": "${{ matrix.android_abi }}"
           }
           EOF
+          echo "Generated update-${{ matrix.android_abi }}.json:"
+          cat update-${{ matrix.android_abi }}.json
 
       - name: Restore module.prop
         run: |
-          [ -f "module.prop.backup" ] && mv module.prop.backup module.prop
+          if [ -f "module.prop.backup" ]; then
+            mv module.prop.backup module.prop
+            echo "Original module.prop restored"
+          fi
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -200,26 +235,26 @@ jobs:
       - name: Create release notes
         run: |
           cat > RELEASE_NOTES.md << EOF
-          # EZ-Clean 多架构版本发布
+          # EZ-Clean Multi-Architecture Release for Android 10+
           
-          **构建信息**
-          - 发布时间: $(date +'%Y-%m-%d %H:%M:%S')
-          - 提交: \`${{ github.sha }}\`
-          - 触发方式: ${{ github.event_name }}
+          **Build Information**
+          - Build time: $(date +'%Y-%m-%d %H:%M:%S')
+          - Commit: \`${{ github.sha }}\`
+          - Trigger: ${{ github.event_name }}
           
-          ## 支持的CPU架构
-          | 架构 | 支持设备 | Android 10+ 兼容性 |
-          |------|----------|-------------------|
-          | **arm64-v8a** | 现代64位ARM设备 | ✅ 完全兼容 |
-          | **armeabi-v7a** | 旧款32位ARM设备 | ✅ 兼容 |
-          | **x86_64** | 64位Intel/AMD设备 | ✅ 兼容 |
-          | **x86** | 32位Intel设备 | ✅ 兼容 |
+          ## Supported CPU Architectures
+          | Architecture | Supported Devices | Android 10+ Compatibility |
+          |--------------|-------------------|--------------------------|
+          | **arm64-v8a** | Modern 64-bit ARM devices | ✅ Fully compatible |
+          | **armeabi-v7a** | Legacy 32-bit ARM devices | ✅ Compatible |
+          | **x86_64** | 64-bit Intel/AMD devices | ✅ Compatible |
+          | **x86** | 32-bit Intel devices | ✅ Compatible |
           
-          ## 版本说明
-          - **基础版**: 核心清理功能，体积更小
-          - **完整版**: 扩展功能集，功能全面
+          ## Version Information
+          - **Basic**: Core cleaning functionality, smaller size
+          - **Full**: Extended feature set, comprehensive functionality
           
-          ## 文件列表
+          ## File List
           $(echo -e "\n")
           $(for file in artifacts/*.zip; do
             if [ -f "$file" ]; then
@@ -227,13 +262,24 @@ jobs:
               echo "  - **\$(basename \$file)** (\$SIZE)"
             fi
           done)
+          
+          ## Installation Guide
+          1. **Determine device architecture**: Use apps like CPU-Z to check your device architecture
+          2. **Select matching version**: Download the version that matches your device architecture
+          3. **Flash module**: Install the module in Magisk/KernelSU
+          4. **Reboot device**: Enable module functionality
+          5. **Enjoy auto-updates**: Future updates can be installed directly from within the app
+          
+          **Note**: Installing versions for incompatible architectures may cause module malfunction!
           EOF
+          
+          echo "Release notes generated"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: "android10-$(date +%Y%m%d-%H%M%S)"
-          name: "EZ-Clean Android 10+ 版本 $(date +'%Y.%m.%d')"
+          name: "EZ-Clean Android 10+ Version $(date +'%Y.%m.%d')"
           body_path: RELEASE_NOTES.md
           draft: false
           prerelease: false
@@ -242,7 +288,7 @@ jobs:
             artifacts/*.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          
+
   workflow-cleanup:
     runs-on: ubuntu-latest
     needs: create-release
@@ -257,4 +303,4 @@ jobs:
           repository: ${{ github.repository }}
           retain_days: 0
           retain_runs: 1
-          keep_minimum_runs: 0          
+          keep_minimum_runs: 0
