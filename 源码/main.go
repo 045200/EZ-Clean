@@ -249,22 +249,7 @@ func getAndroidVersion() (int, error) {
 			return version, nil
 		}
 	}
-
-	// 方法2: 通过系统文件
-	if content, err := os.ReadFile("/system/build.prop"); err == nil {
-		lines := strings.Split(string(content), "\n")
-		for _, line := range lines {
-			if strings.HasPrefix(line, "ro.build.version.sdk=") {
-				parts := strings.Split(line, "=")
-				if len(parts) == 2 {
-					if version, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil {
-						return version, nil
-					}
-				}
-			}
-		}
-	}
-
+	
 	return 0, fmt.Errorf("无法检测Android版本")
 }
 
@@ -277,11 +262,6 @@ func detectRootMethod() string {
 	// 检测Magisk
 	if checkMagisk() {
 		return "magisk"
-	}
-
-	// 检测传统SuperSU
-	if checkSuperSU() {
-		return "supersu"
 	}
 
 	return "none"
@@ -300,16 +280,6 @@ func checkKernelSU() bool {
 		if _, err := os.Stat(path); err == nil {
 			return true
 		}
-	}
-	
-	// 检查KernelSU守护进程
-	if checkProcessRunning("ksud") {
-		return true
-	}
-
-	// 检查KernelSU模块
-	if checkProcessRunning("kernel_su") {
-		return true
 	}
 	
 	return false
@@ -340,22 +310,6 @@ func checkMagisk() bool {
 		return true
 	}
 	
-	return false
-}
-
-func checkSuperSU() bool {
-	superSUPaths := []string{
-		"/system/bin/su",
-		"/system/xbin/su",
-		"/sbin/su",
-		"/vendor/bin/su",
-	}
-	
-	for _, path := range superSUPaths {
-		if checkSuBinary(path) {
-			return true
-		}
-	}
 	return false
 }
 
