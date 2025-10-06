@@ -5,22 +5,17 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
-  # 允许在 GitHub Actions 页面手动触发此工作流
   workflow_dispatch:
 
 env:
   GO_VERSION: '1.21'
   MODULE_NAME: 'EZ-Clean'
-  # 使用较新的稳定版 NDK 以获得更好的工具链支持
   NDK_VERSION: 'r26d'
 
 jobs:
-  # 构建核心任务，使用矩阵策略并行构建所有架构和变体
   build-multi-arch:
     runs-on: ubuntu-latest
     strategy:
-      # 构建矩阵定义了所有需要编译的架构和变体组合
-      # 这将产生 2 个变体 * 4 个架构 = 8 个并行的构建任务
       matrix:
         include:
           - goarch: arm64
@@ -36,7 +31,6 @@ jobs:
             android_abi: x86
             toolchain_triple: i686-linux-android29
         variant: [basic, full]
-      # fail-fast: false 确保即使矩阵中有一个任务失败，其他任务也会继续运行
       fail-fast: false
 
     name: Build ${{ matrix.variant }} for ${{ matrix.android_abi }}
@@ -60,14 +54,11 @@ jobs:
 
       - name: 安装构建依赖
         run: |
-          set -e
           sudo apt-get update
           sudo apt-get install -y zip file
 
       - name: 初始化 Go 模块
         run: |
-          set -e
-          # 如果 go.mod 不存在，则初始化
           if [ ! -f "go.mod" ]; then
             go mod init github.com/${{ github.repository }}
           fi
@@ -76,37 +67,64 @@ jobs:
       - name: 定位 Go 源文件
         id: source_files
         run: |
-          set -e
+          # 检查基础版源文件
           if [ -f "source/main.go" ]; then
-            echo "MAIN_GO=source/main.go" >> "$GITHUB_OUTPUT"
-            echo "EZ_GO=source/ez.go" >> "$GITHUB_OUTPUT"
+            MAIN_GO="source/main.go"
           elif [ -f "main.go" ]; then
-            echo "MAIN_GO=main.go" >> "$GITHUB_OUTPUT"
-            echo "EZ_GO=ez.go" >> "$GITHUB_OUTPUT"
+            MAIN_GO="main.go"
           else
-            echo "错误：未找到 Go 源文件。"
+            echo "错误：未找到基础版 Go 源文件 (main.go)"
             exit 1
           fi
+          
+          # 检查完整版源文件
+          if [ -f "source/ez.go" ]; then
+            EZ_GO="source/ez.go"
+          elif [ -f "ez.go" ]; then
+            EZ_GO="ez.go"
+          else
+            echo "错误：未找到完整版 Go 源文件 (ez.go)"
+            exit 1
+          fi
+          
+          echo "MAIN_GO=$MAIN_GO" >> "$GITHUB_OUTPUT"
+          echo "EZ_GO=$EZ_GO" >> "$GITHUB_OUTPUT"
+          echo "✅ 找到源文件: $MAIN_GO (基础版), $EZ_GO (完整版)"
+
+      - name: 预计算版本信息
+        id: version_info
+        run: |
+          VERSION_DATE=$(date +%Y.%m.%d)
+          VERSION_CODE=$(( $(date +%s) / 100 ))
+          echo "VERSION_DATE=$VERSION_DATE" >> "$GITHUB_OUTPUT"
+          echo "VERSION_CODE=$VERSION_CODE" >> "$GITHUB_OUTPUT"
+          echo "版本信息: $VERSION_DATE (代码: $VERSION_CODE)"
 
       - name: 设置构建参数
         id: build_params
         run: |
-          echo "ZIP_NAME=EZ-Clean-${{ matrix.variant }}-${{ matrix.android_abi }}.zip" >> "$GITHUB_OUTPUT"
-          echo "MODULE_DIR=module-${{ matrix.variant }}-${{ matrix.android_abi }}" >> "$GITHUB_OUTPUT"
+          ZIP_NAME="EZ-Clean-${{ matrix.variant }}-${{ matrix.android_abi }}.zip"
+          MODULE_DIR="module-${{ matrix.variant }}-${{ matrix.android_abi }}"
+          BINARY_NAME="EZ-${{ matrix.variant }}-${{ matrix.android_abi }}"
+          
+          echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_OUTPUT"
+          echo "MODULE_DIR=$MODULE_DIR" >> "$GITHUB_OUTPUT"
+          echo "BINARY_NAME=$BINARY_NAME" >> "$GITHUB_OUTPUT"
 
-      - name: 验证 NDK 交叉编译器是否存在
+      - name: 验证 NDK 交叉编译器
         run: |
-          set -e
-          NDK_PATH=${{ steps.setup-ndk.outputs.NDK_PATH }}
+          NDK_PATH="${{ steps.setup-ndk.outputs.NDK_PATH }}"
           COMPILER_PATH="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.toolchain_triple }}-clang"
-          echo "正在检查编译器: $COMPILER_PATH"
+          
           if [ ! -f "$COMPILER_PATH" ]; then
-            echo "❌ 编译器未在预期路径找到！"
-            find "$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/" -name "*clang*"
+            echo "❌ 编译器未找到: $COMPILER_PATH"
+            echo "可用的编译器:"
+            find "$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin/" -name "*clang*" | sort
             exit 1
           fi
-          echo "✅ 编译器已找到。版本信息:"
-          "$COMPILER_PATH" --version
+          
+          echo "✅ 编译器验证成功: $COMPILER_PATH"
+          "$COMPILER_PATH" --version | head -1
 
       - name: 使用 CGO 交叉编译安卓二进制文件
         env:
@@ -116,107 +134,130 @@ jobs:
           CC: ${{ steps.setup-ndk.outputs.NDK_PATH }}/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.toolchain_triple }}-clang
         run: |
           set -e
-          BINARY_NAME="EZ-${{ matrix.variant }}-${{ matrix.android_abi }}"
+          BINARY_NAME="${{ steps.build_params.outputs.BINARY_NAME }}"
+          
+          # 根据变体选择源文件
           if [ "${{ matrix.variant }}" = "basic" ]; then
             SOURCE_FILE="${{ steps.source_files.outputs.MAIN_GO }}"
+            echo "🔧 编译基础版: $SOURCE_FILE"
           else
             SOURCE_FILE="${{ steps.source_files.outputs.EZ_GO }}"
+            echo "🔧 编译完整版: $SOURCE_FILE"
           fi
           
-          echo "正在编译源文件: $SOURCE_FILE"
+          # 验证源文件存在
+          if [ ! -f "$SOURCE_FILE" ]; then
+            echo "❌ 源文件不存在: $SOURCE_FILE"
+            exit 1
+          fi
+          
+          echo "📦 编译目标: $BINARY_NAME"
           go build -trimpath -ldflags="-s -w" -o "$BINARY_NAME" "$SOURCE_FILE"
           
-          echo "✅ 编译成功。二进制文件信息:"
+          echo "✅ 编译成功"
           file "$BINARY_NAME"
           ls -lh "$BINARY_NAME"
 
-      - name: 更新模块属性文件 (module.prop)
+      - name: 生成模块属性文件
         run: |
           set -e
-          # 备份原始文件
-          if [ -f "module.prop" ]; then
-            cp module.prop module.prop.backup
-          fi
+          MODULE_PROP_FILE="module-${{ matrix.variant }}-${{ matrix.android_abi }}.prop"
           
-          VERSION_DATE=$(date +%Y.%m.%d)
-          VERSION_CODE=$(( $(date +%s) / 100 ))
-          
-          # 使用脚本生成 module.prop 文件，避免在文件内容中使用 GitHub Actions 表达式
-          cat > module.prop << EOF
+          cat > "$MODULE_PROP_FILE" << EOF
 id=${{ env.MODULE_NAME }}
-name=${{ env.MODULE_NAME }}
-version=v${VERSION_DATE}
-versionCode=${VERSION_CODE}
+name=${{ env.MODULE_NAME }}-${{ matrix.variant }}
+version=v${{ steps.version_info.outputs.VERSION_DATE }}
+versionCode=${{ steps.version_info.outputs.VERSION_CODE }}
 author=GitHub Actions
-description=为 ${{ matrix.android_abi }} 构建的多架构模块（${{ matrix.variant }} 版）。
+description=Optimized for ${{ matrix.android_abi }} architecture (${{ matrix.variant }} variant)
 architecture=${{ matrix.android_abi }}
 EOF
           
           echo "生成的 module.prop 内容:"
-          cat module.prop
+          cat "$MODULE_PROP_FILE"
 
       - name: 准备模块文件
         run: |
           set -e
-          BINARY_NAME="EZ-${{ matrix.variant }}-${{ matrix.android_abi }}"
           MODULE_DIR="${{ steps.build_params.outputs.MODULE_DIR }}"
+          BINARY_NAME="${{ steps.build_params.outputs.BINARY_NAME }}"
+          MODULE_PROP_FILE="module-${{ matrix.variant }}-${{ matrix.android_abi }}.prop"
+          
+          echo "📁 创建模块目录: $MODULE_DIR"
           mkdir -p "$MODULE_DIR"
           
-          # 复制通用模块文件（如果存在）
-          [ -d "META-INF" ] && cp -rL META-INF/ "$MODULE_DIR"/
-          [ -f "customize.sh" ] && cp customize.sh "$MODULE_DIR"/
-          [ -f "reload.sh" ] && cp customize.sh "$MODULE_DIR"/
-          [ -f "blacklist.conf" ] && cp customize.sh "$MODULE_DIR"/
-          [ -f "whitelist.conf" ] && cp customize.sh "$MODULE_DIR"/
-          [ -f "MT.conf" ] && cp customize.sh "$MODULE_DIR"/
-          [ -f "config.conf" ] && cp customize.sh "$MODULE_DIR"/
-          [ -f "service.sh" ] && cp service.sh "$MODULE_DIR"/
+          # 复制通用模块文件的函数
+          copy_if_exists() {
+            local src="$1"
+            local dest="$2"
+            if [ -f "$src" ] || [ -d "$src" ]; then
+              echo "📄 复制: $src -> $dest"
+              cp -r "$src" "$dest"
+            else
+              echo "⚠️  跳过不存在的文件: $src"
+            fi
+          }
           
-          # 复制生成的 module.prop 和编译好的二进制文件
-          cp module.prop "$MODULE_DIR"/
-          cp "$BINARY_NAME" "$MODULE_DIR"/EZ 
-          chmod +x "$MODULE_DIR"/EZ
+          # 复制通用文件
+          copy_if_exists "META-INF" "$MODULE_DIR/"
+          copy_if_exists "customize.sh" "$MODULE_DIR/"
+          copy_if_exists "service.sh" "$MODULE_DIR/"
+          copy_if_exists "reload.sh" "$MODULE_DIR/"
+          copy_if_exists "blacklist.conf" "$MODULE_DIR/"
+          copy_if_exists "whitelist.conf" "$MODULE_DIR/"
+          copy_if_exists "MT.conf" "$MODULE_DIR/"
+          copy_if_exists "config.conf" "$MODULE_DIR/"
           
-          echo "模块文件已准备就绪于 $MODULE_DIR/:"
-          ls -la "$MODULE_DIR"/
+          # 复制生成的模块配置和二进制文件
+          cp "$MODULE_PROP_FILE" "$MODULE_DIR/module.prop"
+          cp "$BINARY_NAME" "$MODULE_DIR/EZ"
+          chmod +x "$MODULE_DIR/EZ"
+          
+          echo "📋 模块文件列表:"
+          ls -la "$MODULE_DIR/"
 
-      - name: 打包模块为 Zip 文件
+      - name: 打包模块
         run: |
           set -e
-          cd ${{ steps.build_params.outputs.MODULE_DIR }}
-          zip -r ../${{ steps.build_params.outputs.ZIP_NAME }} .
+          cd "${{ steps.build_params.outputs.MODULE_DIR }}"
+          zip -r9 "../${{ steps.build_params.outputs.ZIP_NAME }}" .
           cd ..
-          echo "打包完成: ${{ steps.build_params.outputs.ZIP_NAME }}"
+          
+          echo "✅ 打包完成: ${{ steps.build_params.outputs.ZIP_NAME }}"
+          ls -lh "${{ steps.build_params.outputs.ZIP_NAME }}"
 
-      - name: 验证生成的 Zip 文件
+      - name: 验证 Zip 文件
         run: |
-          set -e
           ZIP_FILE="${{ steps.build_params.outputs.ZIP_NAME }}"
-          echo "验证 Zip 文件: $ZIP_FILE"
-          if [ -f "$ZIP_FILE" ]; then
-            unzip -l "$ZIP_FILE" | head -20
-            echo "✅ Zip 文件验证成功"
+          if [ ! -f "$ZIP_FILE" ]; then
+            echo "❌ Zip 文件未找到: $ZIP_FILE"
+            exit 1
+          fi
+          
+          echo "🔍 验证 Zip 文件内容:"
+          if unzip -l "$ZIP_FILE" > /dev/null; then
+            echo "✅ Zip 文件格式正确"
+            echo "📁 包含的文件:"
+            unzip -l "$ZIP_FILE" | head -10
           else
-            echo "❌ Zip 文件未找到"
+            echo "❌ Zip 文件损坏"
             exit 1
           fi
 
-      - name: 恢复原始 module.prop
+      - name: 清理临时文件
         if: always()
         run: |
-          if [ -f "module.prop.backup" ]; then
-            mv module.prop.backup module.prop
-            echo "原始 module.prop 已恢复。"
-          fi
+          # 清理临时文件但保留构建产物
+          rm -f module-*.prop
+          echo "🧹 临时文件清理完成"
 
-      - name: 上传模块构建产物
+      - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.build_params.outputs.ZIP_NAME }}
           path: ${{ steps.build_params.outputs.ZIP_NAME }}
           retention-days: 7
 
-  # 构建汇总任务，作为创建 Release 之前的"守门员"
   build-summary:
     name: 构建结果汇总
     runs-on: ubuntu-latest
@@ -224,114 +265,145 @@ EOF
     if: always()
     outputs:
       build_succeeded: ${{ steps.summary.outputs.build_succeeded }}
+      total_built: ${{ steps.summary.outputs.total_built }}
       
     steps:
-      - name: 下载所有构建产物
+      - name: 下载构建产物
         uses: actions/download-artifact@v4
+        continue-on-error: true
         with:
           path: artifacts
           
-      - name: 显示构建汇总报告
+      - name: 生成构建报告
         id: summary
         run: |
-          set -e
-          echo "=== 构建汇总报告 ==="
-          TOTAL_EXPECTED=8
-          TOTAL_BUILT=$(find artifacts -type f -name "*.zip" | wc -l)
+          echo "📊 === 构建汇总报告 ==="
           
-          echo "已完成的构建:"
-          find artifacts -type f -name "*.zip" -printf "✅ %f\n"
-
-          echo "====================="
-          echo "总计构建: $TOTAL_BUILT/$TOTAL_EXPECTED"
-          
-          if [ $TOTAL_BUILT -ne $TOTAL_EXPECTED ]; then
-            echo "build_succeeded=false" >> "$GITHUB_OUTPUT"
-            echo "⚠️ 部分构建失败。已中止发布流程。"
+          # 计算成功构建的数量
+          if [ -d "artifacts" ]; then
+            TOTAL_BUILT=$(find artifacts -maxdepth 1 -type f -name "*.zip" | wc -l)
           else
+            TOTAL_BUILT=0
+          fi
+          
+          TOTAL_EXPECTED=8
+          SUCCESS_RATE=$(( TOTAL_BUILT * 100 / TOTAL_EXPECTED ))
+          
+          echo "📈 构建成功率: $SUCCESS_RATE% ($TOTAL_BUILT/$TOTAL_EXPECTED)"
+          
+          if [ $TOTAL_BUILT -gt 0 ]; then
+            echo "✅ 成功的构建:"
+            find artifacts -maxdepth 1 -type f -name "*.zip" -printf "  - %f\n" | sort
+          fi
+          
+          # 检查缺失的构建
+          echo "🔍 检查缺失的构建..."
+          expected_combinations=(
+            "basic-arm64-v8a" "basic-armeabi-v7a" "basic-x86_64" "basic-x86"
+            "full-arm64-v8a" "full-armeabi-v7a" "full-x86_64" "full-x86"
+          )
+          
+          for combo in "${expected_combinations[@]}"; do
+            if ! find artifacts -name "EZ-Clean-$combo.zip" | grep -q .; then
+              echo "❌ 缺失: $combo"
+            fi
+          done
+          
+          echo "total_built=$TOTAL_BUILT" >> "$GITHUB_OUTPUT"
+          
+          if [ $TOTAL_BUILT -eq $TOTAL_EXPECTED ]; then
             echo "build_succeeded=true" >> "$GITHUB_OUTPUT"
-            echo "🎉 所有构建均已成功！正在准备发布..."
+            echo "🎉 所有架构构建成功！"
+          else
+            echo "build_succeeded=false" >> "$GITHUB_OUTPUT"
+            echo "⚠️ 部分构建失败，已中止发布流程"
           fi
 
-  # 创建 GitHub Release 任务
   create-release:
     runs-on: ubuntu-latest
     needs: build-summary
-    # 仅当推送到 main 分支且所有构建都成功时才运行
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.build-summary.outputs.build_succeeded == 'true'
     permissions:
-      contents: write # 必需权限
+      contents: write
       
     steps:
-      - name: 下载所有构建产物
+      - name: 下载构建产物
         uses: actions/download-artifact@v4
         with:
           path: artifacts
 
-      - name: 准备发布所需的文件 (Release Assets)
+      - name: 准备发布资源
         id: release_assets
         run: |
           set -e
-          # 将所有 zip 文件从子目录移动到顶层 artifacts 目录
-          find artifacts -type f -name "*.zip" -exec mv {} artifacts/ \;
-
-          TAG_NAME="android10-$(date +'%Y.%m.%d-%H%M')"
-          RELEASE_NAME="${{ env.MODULE_NAME }} 安卓 10+ | $(date +'%Y.%m.%d')"
-          VERSION_CODE=$(( $(date +%s) / 100 ))
-
-          echo "TAG_NAME=${TAG_NAME}" >> "$GITHUB_OUTPUT"
-          echo "RELEASE_NAME=${RELEASE_NAME}" >> "$GITHUB_OUTPUT"
+          # 移动所有 zip 文件到 artifacts 根目录
+          find artifacts -name "*.zip" -exec mv {} artifacts/ \;
           
-          # 为每个架构生成 update.json 文件
+          TAG_NAME="android10-${{ steps.version_info.outputs.VERSION_DATE }}"
+          RELEASE_NAME="${{ env.MODULE_NAME }} Android 10+ | ${{ steps.version_info.outputs.VERSION_DATE }}"
+          
+          echo "TAG_NAME=$TAG_NAME" >> "$GITHUB_OUTPUT"
+          echo "RELEASE_NAME=$RELEASE_NAME" >> "$GITHUB_OUTPUT"
+          
+          # 为每个架构生成 update.json
           for zip_file in artifacts/*.zip; do
+            if [ ! -f "$zip_file" ]; then
+              continue
+            fi
+            
             BASENAME=$(basename "$zip_file" .zip)
             ABI=$(echo "$BASENAME" | grep -oE '(arm64-v8a|armeabi-v7a|x86_64|x86)$')
-            JSON_FILE="artifacts/update-${ABI}.json"
+            VARIANT=$(echo "$BASENAME" | grep -oE '(basic|full)')
             
-            # 使用 EOF 确保 JSON 格式正确
-            cat > "$JSON_FILE" << EOF
+            if [ -n "$ABI" ] && [ -n "$VARIANT" ]; then
+              JSON_FILE="artifacts/update-${VARIANT}-${ABI}.json"
+              
+              cat > "$JSON_FILE" << EOF
 {
-  "version": "v$(date +%Y.%m.%d)",
-  "versionCode": ${VERSION_CODE},
+  "version": "v${{ steps.version_info.outputs.VERSION_DATE }}",
+  "versionCode": ${{ steps.version_info.outputs.VERSION_CODE }},
   "zipUrl": "https://github.com/${{ github.repository }}/releases/download/${TAG_NAME}/$(basename "$zip_file")",
   "changelog": "https://github.com/${{ github.repository }}/releases/tag/${TAG_NAME}"
 }
 EOF
+              echo "生成的更新配置: $(basename "$JSON_FILE")"
+            fi
           done
 
-          # 生成发布日志 (Release Notes)
-          NOTES_FILE="artifacts/RELEASE_NOTES.md"
-          # 使用重定向块来生成 Markdown 文件
-          {
-            echo "# ${{ env.MODULE_NAME }} 多架构发布版"
-            echo "**构建时间**: $(date +'%Y-%m-%d %H:%M:%S UTC')"
-            echo "**代码提交**: \`${{ github.sha }}\`"
-            echo ""
-            echo "此版本为所有主流安卓 CPU 架构提供了构建。请安装与您设备架构相匹配的模块。"
-            echo ""
-            echo "### 安装指南"
-            echo "1. 使用类似 CPU-Z 的应用检查您设备的 ABI（架构）。"
-            echo "2. 从下方的附件中下载匹配的 Zip 文件。"
-            echo "3. 通过 Magisk 或 KernelSU 刷入模块并重启。"
-            echo ""
-            echo "### 文件列表"
-            echo ""
-            echo "#### 基础版 (核心功能)"
-            echo "| 架构 | 大小 |"
-            echo "| :--- | :--- |"
-            find artifacts -name "EZ-Clean-basic-*.zip" -print0 | sort -z | while IFS= read -r -d '' file; do
-                SIZE=$(du -h "$file" | cut -f1); ARCH=$(basename "$file" .zip | grep -oE '(arm64-v8a|armeabi-v7a|x86_64|x86)$')
-                echo "| \`$ARCH\` | \`$SIZE\` |"
-            done
-            echo ""
-            echo "#### 完整版 (扩展功能)"
-            echo "| 架构 | 大小 |"
-            echo "| :--- | :--- |"
-            find artifacts -name "EZ-Clean-full-*.zip" -print0 | sort -z | while IFS= read -r -d '' file; do
-                SIZE=$(du -h "$file" | cut -f1); ARCH=$(basename "$file" .zip | grep -oE '(arm64-v8a|armeabi-v7a|x86_64|x86)$')
-                echo "| \`$ARCH\` | \`$SIZE\` |"
-            done
-          } > "$NOTES_FILE"
+          # 生成发布说明
+          cat > artifacts/RELEASE_NOTES.md << EOF
+# ${{ env.MODULE_NAME }} 多架构发布版
+
+**构建版本**: v${{ steps.version_info.outputs.VERSION_DATE }}  
+**版本代码**: ${{ steps.version_info.outputs.VERSION_CODE }}  
+**提交哈希**: \`${{ github.sha }}\`  
+**构建时间**: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+
+## 安装指南
+
+1. 使用 CPU-Z 等工具确认设备架构
+2. 下载对应的 Zip 文件
+3. 通过 Magisk/KernelSU 刷入模块
+4. 重启设备
+
+## 文件列表
+
+### 基础版 (核心功能)
+| 架构 | 文件大小 |
+|------|----------|
+$(find artifacts -name "EZ-Clean-basic-*.zip" -exec sh -c 'echo "| \`$(basename {} .zip | sed "s/EZ-Clean-basic-//")\` | \`$(du -h {} | cut -f1)\` |"' \;)
+
+### 完整版 (扩展功能)
+| 架构 | 文件大小 |
+|------|----------|
+$(find artifacts -name "EZ-Clean-full-*.zip" -exec sh -c 'echo "| \`$(basename {} .zip | sed "s/EZ-Clean-full-//")\` | \`$(du -h {} | cut -f1)\` |"' \;)
+
+## 架构说明
+- **arm64-v8a**: 现代 64 位 ARM 设备
+- **armeabi-v7a**: 旧款 32 位 ARM 设备  
+- **x86_64**: 64 位 Intel/AMD 设备
+- **x86**: 32 位 Intel/AMD 设备
+EOF
 
       - name: 创建 GitHub Release
         uses: softprops/action-gh-release@v2
@@ -339,22 +411,9 @@ EOF
           tag_name: ${{ steps.release_assets.outputs.TAG_NAME }}
           name: ${{ steps.release_assets.outputs.RELEASE_NAME }}
           body_path: artifacts/RELEASE_NOTES.md
-          files: artifacts/* # 上传所有 Zip 和 update.json
+          files: artifacts/*.zip artifacts/*.json
+          draft: false
+          prerelease: false
 
-  # 清理旧的工作流运行记录
-  workflow-cleanup:
-    runs-on: ubuntu-latest
-    needs: create-release
-    # 即使 release 失败，也应尝试清理
-    if: always() && github.ref == 'refs/heads/main'
-    permissions:
-      actions: write # 必需权限
-      
-    steps:
-      - name: 清理旧的工作流运行记录
-        uses: Mattraks/delete-workflow-runs@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          repository: ${{ github.repository }}
-          retain_days: 0
-          keep_minimum_runs: 0
+  # 移除 workflow-cleanup 任务，因为它可能意外删除当前运行记录
+  # 如果需要清理，建议使用 GitHub 的自动清理功能或单独的工作流
