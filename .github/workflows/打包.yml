@@ -62,17 +62,26 @@ jobs:
             go.sum
             **/go.sum
 
-      # 3. 设置Android NDK（用于CGO编译）
-      - name: Setup Android NDK
-        uses: nttld/setup-ndk@v1
-        id: setup-ndk
-        with:
-          ndk-version: 'r25b'
+      # 3. 安装Android NDK和工具链
+      - name: Setup Android NDK and toolchain
+        run: |
+          # 安装Android NDK
+          sudo apt-get update
+          sudo apt-get install -y wget unzip
+          
+          # 下载并安装Android NDK
+          wget -q https://dl.google.com/android/repository/android-ndk-r25b-linux.zip
+          unzip -q android-ndk-r25b-linux.zip
+          export ANDROID_NDK_HOME=$(pwd)/android-ndk-r25b
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME" >> $GITHUB_ENV
+          
+          # 验证NDK安装
+          echo "NDK安装完成，路径: $ANDROID_NDK_HOME"
+          ls -la $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/*-clang | head -5
 
       # 4. 依赖安装
       - name: Install dependencies
         run: |
-          sudo apt-get update
           sudo apt-get install -y jq zip file
 
       # 5. 初始化Go模块（如需要）
@@ -107,7 +116,20 @@ jobs:
           echo "ZIP_NAME=EZ-Clean-${{ matrix.variant }}-${{ matrix.android_abi }}.zip" >> $GITHUB_OUTPUT
           echo "MODULE_DIR=module-${{ matrix.variant }}-${{ matrix.android_abi }}" >> $GITHUB_OUTPUT
 
-      # 8. 编译Go程序（启用CGO并使用NDK工具链）
+      # 8. 验证编译器路径
+      - name: Verify compiler path
+        run: |
+          COMPILER_PATH="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.toolchain_triple }}-clang"
+          echo "检查编译器路径: $COMPILER_PATH"
+          if [ -f "$COMPILER_PATH" ]; then
+            echo "✅ 编译器存在: $(ls -la "$COMPILER_PATH")"
+          else
+            echo "❌ 编译器不存在，可用的编译器:"
+            ls "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/" | grep clang | head -10
+            exit 1
+          fi
+
+      # 9. 编译Go程序（优先尝试静态编译）
       - name: Build Go binary for target arch
         run: |
           echo "编译 ${{ matrix.variant }} 版本，架构 ${{ matrix.android_abi }} (GOARCH=${{ matrix.goarch }})"
@@ -125,38 +147,37 @@ jobs:
             exit 0
           fi
           
-          # 设置CGO编译环境
+          # 方法1: 首先尝试完全静态编译（禁用CGO）
+          echo "尝试方法1: 静态编译（禁用CGO）..."
           export GOOS=android
           export GOARCH=${{ matrix.goarch }}
-          export CGO_ENABLED=1
-          export CC="${{ steps.setup-ndk.outputs.NDK_PATH }}/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.toolchain_triple }}-clang"
+          export CGO_ENABLED=0
           
-          echo "使用编译器: $CC"
+          go build -tags netgo -ldflags="-s -w -extldflags=-static" -o ${{ steps.build_params.outputs.BINARY_NAME }} "$SOURCE_FILE"
           
-          # 针对Android目标编译（启用CGO）
-          go build -ldflags="-s -w" -o ${{ steps.build_params.outputs.BINARY_NAME }} "$SOURCE_FILE"
-          
-          # 验证编译结果
           if [ -f "${{ steps.build_params.outputs.BINARY_NAME }}" ]; then
-            echo "编译成功!"
+            echo "✅ 方法1成功: 静态编译完成"
             file ${{ steps.build_params.outputs.BINARY_NAME }}
           else
-            echo "错误: 编译失败，二进制文件未生成"
-            # 尝试备用构建方法（禁用CGO）
-            echo "尝试备用构建方法（禁用CGO）..."
-            export CGO_ENABLED=0
-            go build -tags netgo -ldflags="-s -w -extldflags=-static" -o ${{ steps.build_params.outputs.BINARY_NAME }} "$SOURCE_FILE"
+            echo "方法1失败，尝试方法2: 使用CGO编译..."
+            
+            # 方法2: 使用CGO和NDK工具链
+            export CGO_ENABLED=1
+            export CC="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.toolchain_triple }}-clang"
+            
+            echo "使用编译器: $CC"
+            go build -ldflags="-s -w" -o ${{ steps.build_params.outputs.BINARY_NAME }} "$SOURCE_FILE"
             
             if [ -f "${{ steps.build_params.outputs.BINARY_NAME }}" ]; then
-              echo "备用构建方法成功!"
+              echo "✅ 方法2成功: CGO编译完成"
               file ${{ steps.build_params.outputs.BINARY_NAME }}
             else
-              echo "备用构建方法也失败"
+              echo "❌ 所有编译方法都失败"
               exit 1
             fi
           fi
 
-      # 9. 更新module.prop以包含架构信息
+      # 10. 更新module.prop以包含架构信息
       - name: Update module.prop with arch info
         run: |
           if [ -f "module.prop" ]; then
@@ -182,7 +203,7 @@ jobs:
             EOF
           fi
 
-      # 10. 准备模块文件（保持二进制文件名为EZ）
+      # 11. 准备模块文件（保持二进制文件名为EZ）
       - name: Prepare module files
         run: |
           mkdir -p ${{ steps.build_params.outputs.MODULE_DIR }}
@@ -202,7 +223,7 @@ jobs:
           echo "模块文件准备完成:"
           ls -la ${{ steps.build_params.outputs.MODULE_DIR }}/
 
-      # 11. 打包模块
+      # 12. 打包模块
       - name: Package module
         run: |
           cd ${{ steps.build_params.outputs.MODULE_DIR }}
@@ -212,7 +233,7 @@ jobs:
           echo "打包完成: ${{ steps.build_params.outputs.ZIP_NAME }}"
           ls -l *.zip
 
-      # 12. 生成架构特定的update.json
+      # 13. 生成架构特定的update.json
       - name: Generate arch-specific update.json
         run: |
           TIMESTAMP=$(date +%s)
@@ -229,7 +250,7 @@ jobs:
           echo "生成的update-${{ matrix.android_abi }}.json:"
           cat update-${{ matrix.android_abi }}.json
 
-      # 13. 恢复原始module.prop
+      # 14. 恢复原始module.prop
       - name: Restore original module.prop
         run: |
           if [ -f "module.prop.backup" ]; then
@@ -237,7 +258,7 @@ jobs:
             echo "module.prop 已恢复"
           fi
 
-      # 14. 上传构建产物
+      # 15. 上传构建产物
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
