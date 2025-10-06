@@ -39,7 +39,7 @@ print_modname() {
     ui_print " "
     ui_print " - Magisk Modules Author : 045200"
     ui_print " - Magisk Modules Name: EZ-Clean"
-    ui_print " - Magisk Modules Version: V4.0"
+    ui_print " - 安装前，请仔细核对CPU架构！"
     ui_print " - 更新时间: 2025-10-06"
     ui_print " "
     ui_print "————————————————————————————————————————————————————————————————"
@@ -92,15 +92,9 @@ on_install() {
             filename=$(basename "$conf_file")
             ui_print "- 复制配置文件: $filename"
             cp "$conf_file" "$CONFIG_DIR/" 2>/dev/null
-        fi
-    done
-    
-    # 复制.json文件
-    for json_file in "$MODPATH"/*.json; do
-        if [ -f "$json_file" ]; then
-            filename=$(basename "$json_file")
-            ui_print "- 复制配置文件: $filename"
-            cp "$json_file" "$CONFIG_DIR/" 2>/dev/null
+            # 复制后删除模块目录中的.conf文件
+            rm -f "$conf_file" 2>/dev/null
+            ui_print "- 已删除模块目录中的: $filename"
         fi
     done
     
@@ -108,12 +102,14 @@ on_install() {
     if [ -f "$MODPATH/reload.sh" ]; then
         ui_print "- 复制脚本: reload.sh"
         cp "$MODPATH/reload.sh" "$CONFIG_DIR/" 2>/dev/null
+        # 复制后删除模块目录中的reload.sh
+        rm -f "$MODPATH/reload.sh" 2>/dev/null
+        ui_print "- 已删除模块目录中的: reload.sh"
     fi
     
     # 设置配置文件权限
     ui_print "- 设置配置文件权限"
     find "$CONFIG_DIR" -type f -name "*.conf" -exec chmod 644 {} + 2>/dev/null
-    find "$CONFIG_DIR" -type f -name "*.json" -exec chmod 644 {} + 2>/dev/null
     find "$CONFIG_DIR" -type f -name "reload.sh" -exec chmod 755 {} + 2>/dev/null
     
     # 验证安装
@@ -125,6 +121,19 @@ on_install() {
         ls -la "$CONFIG_DIR" | while read line; do
             ui_print "  $line"
         done
+    fi
+    
+    # 检查模块目录中是否还有配置文件残留
+    ui_print "- 检查模块目录中的配置文件..."
+    remaining_conf_files=$(find "$MODPATH" -name "*.conf" -o -name "reload.sh" 2>/dev/null | wc -l)
+    if [ "$remaining_conf_files" -eq 0 ]; then
+        ui_print "- 模块目录中的配置文件已完全清理"
+    else
+        ui_print "- 警告: 模块目录中仍有 $remaining_conf_files 个配置文件残留"
+        # 强制删除残留的配置文件
+        find "$MODPATH" -name "*.conf" -delete 2>/dev/null
+        find "$MODPATH" -name "reload.sh" -delete 2>/dev/null
+        ui_print "- 已强制删除残留配置文件"
     fi
     
     if [ $config_file_count -gt 0 ]; then

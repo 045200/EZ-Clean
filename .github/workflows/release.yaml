@@ -29,37 +29,94 @@ env:
   NDK_VERSION: 'r26b'
 
 jobs:
-  build:
+  version-setup:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.VERSION }}
+      version_code: ${{ steps.version.outputs.VERSION_CODE }}
+    steps:
+    - name: Determine version and version code
+      id: version
+      run: |
+        if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+          echo "VERSION=${{ github.event.inputs.release_version }}" >> $GITHUB_OUTPUT
+          echo "VERSION_CODE=${{ github.event.inputs.version_code }}" >> $GITHUB_OUTPUT
+        else
+          echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          echo "VERSION_CODE=1" >> $GITHUB_OUTPUT
+        fi
+
+  update-json-files:
+    runs-on: ubuntu-latest
+    needs: version-setup
+    permissions:
+      contents: write
     strategy:
       matrix:
         include:
-          # Basic version builds
+          - module_type: basic
+            json_file: arm.json
+            arch: arm
+          - module_type: basic
+            json_file: arm64.json
+            arch: arm64
+          - module_type: multi
+            json_file: arm.json
+            arch: arm
+          - module_type: multi
+            json_file: arm64.json
+            arch: arm64
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Update JSON file
+        run: |
+          jq --arg version "${{ needs.version-setup.outputs.version }}" \
+             --arg versionCode "${{ needs.version-setup.outputs.version_code }}" \
+             --arg zipUrl "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/EZ-Clean-${{ matrix.module_type }}-${{ matrix.arch }}.zip" \
+             --arg changelog "https://github.com/${{ github.repository }}/releases/tag/${{ needs.version-setup.outputs.version }}" \
+             '.version = $version | .versionCode = ($versionCode | tonumber) | .zipUrl = $zipUrl | .changelog = $changelog' \
+             ${{ matrix.module_type }}/${{ matrix.json_file }} > temp.json
+          mv temp.json ${{ matrix.module_type }}/${{ matrix.json_file }}
+
+      - name: Commit and push JSON files
+        run: |
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add ${{ matrix.module_type }}/${{ matrix.json_file }}
+          git commit -m "ci: update ${{ matrix.module_type }}/${{ matrix.json_file }} for ${{ needs.version-setup.outputs.version }}"
+          git push
+
+  build:
+    runs-on: ubuntu-latest
+    needs: [version-setup, update-json-files]
+    strategy:
+      matrix:
+        include:
           - arch: arm64
             goarch: arm64
             cc: aarch64-linux-android24-clang
             module_type: basic
             source_file: main.go
-            json_file: arm64.json
           - arch: arm
             goarch: arm
             cc: armv7a-linux-androideabi24-clang
             module_type: basic
             source_file: main.go
-            json_file: arm.json
-          # Multi version builds  
           - arch: arm64
             goarch: arm64
             cc: aarch64-linux-android24-clang
             module_type: multi
             source_file: ez.go
-            json_file: arm64.json
           - arch: arm
             goarch: arm
             cc: armv7a-linux-androideabi24-clang
             module_type: multi
             source_file: ez.go
-            json_file: arm.json
 
     steps:
     - name: Checkout repository
@@ -77,19 +134,6 @@ jobs:
         unzip -q android-ndk-${{ env.NDK_VERSION }}-linux.zip
         echo "NDK_HOME=$PWD/android-ndk-${{ env.NDK_VERSION }}" >> $GITHUB_ENV
         echo "$PWD/android-ndk-${{ env.NDK_VERSION }}/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
-
-    - name: Determine version and version code
-      id: version
-      run: |
-        if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-          echo "VERSION=${{ github.event.inputs.release_version }}" >> $GITHUB_OUTPUT
-          echo "VERSION_CODE=${{ github.event.inputs.version_code }}" >> $GITHUB_OUTPUT
-        else
-          echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-          echo "VERSION_CODE=1" >> $GITHUB_OUTPUT
-        fi
-        echo "Using version: ${{ steps.version.outputs.VERSION }}"
-        echo "Using version code: ${{ steps.version.outputs.VERSION_CODE }}"
 
     - name: Check build condition
       id: check_build
@@ -112,171 +156,70 @@ jobs:
         export CC=${{ matrix.cc }}
         export CGO_ENABLED=1
         
-        # Build Go binary
         cd source
         go build -ldflags="-s -w" -o ../EZ ${{ matrix.source_file }}
         cd ..
         
-        # Create build directory
         mkdir -p build/${{ matrix.module_type }}_${{ matrix.arch }}
         
-        # Copy common files
         cp -r META-INF whitelist.conf blacklist.conf MT.conf service.sh customize.sh reload.sh config.conf build/${{ matrix.module_type }}_${{ matrix.arch }}/
         cp EZ build/${{ matrix.module_type }}_${{ matrix.arch }}/
         
-        # Copy and update module.prop - 关键修改在这里
         cp ${{ matrix.module_type }}/module.prop build/${{ matrix.module_type }}_${{ matrix.arch }}/
         
-        # 更新 module.prop 中的版本信息
-        sed -i "s|^version=.*|version=${{ steps.version.outputs.VERSION }}|" build/${{ matrix.module_type }}_${{ matrix.arch }}/module.prop
-        sed -i "s|^versionCode=.*|versionCode=${{ steps.version.outputs.VERSION_CODE }}|" build/${{ matrix.module_type }}_${{ matrix.arch }}/module.prop
-        
-        # 更新 module.prop 中的 updateJson 字段，指向正确的架构 JSON 文件
-        sed -i "s|^updateJson=.*|updateJson=https://raw.githubusercontent.com/${{ github.repository }}/main/${{ matrix.module_type }}/${{ matrix.json_file }}|" build/${{ matrix.module_type }}_${{ matrix.arch }}/module.prop
-        
-        echo "Built ${{ matrix.module_type }} version for ${{ matrix.arch }}"
-        echo "Version: ${{ steps.version.outputs.VERSION }}"
-        echo "Version Code: ${{ steps.version.outputs.VERSION_CODE }}"
-        echo "Module.prop updateJson set to: https://raw.githubusercontent.com/${{ github.repository }}/main/${{ matrix.module_type }}/${{ matrix.json_file }}"
+        sed -i "s|^version=.*|version=${{ needs.version-setup.outputs.version }}|" build/${{ matrix.module_type }}_${{ matrix.arch }}/module.prop
+        sed -i "s|^versionCode=.*|versionCode=${{ needs.version-setup.outputs.version_code }}|" build/${{ matrix.module_type }}_${{ matrix.arch }}/module.prop
 
-    - name: Update JSON files
-      if: steps.check_build.outputs.should_build == 'true'
-      run: |
-        # 使用 jq 更新对应的 JSON 文件
-        jq --arg version "${{ steps.version.outputs.VERSION }}" \
-           --arg versionCode "${{ steps.version.outputs.VERSION_CODE }}" \
-           --arg zipUrl "https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/EZ-Clean-${{ matrix.module_type }}-${{ matrix.arch }}.zip" \
-           --arg changelog "https://github.com/${{ github.repository }}/releases/tag/${{ steps.version.outputs.VERSION }}" \
-           '.version = $version | .versionCode = ($versionCode | tonumber) | .zipUrl = $zipUrl | .changelog = $changelog' \
-           ${{ matrix.module_type }}/${{ matrix.json_file }} > temp.json && mv temp.json ${{ matrix.module_type }}/${{ matrix.json_file }}
-        
-        echo "Updated ${{ matrix.module_type }}/${{ matrix.json_file }}"
-        echo "JSON content:"
-        cat ${{ matrix.module_type }}/${{ matrix.json_file }}
-
-    - name: Package modules
+    - name: Package modules with correct names
       if: steps.check_build.outputs.should_build == 'true'
       run: |
         cd build
         for dir in */; do
           if [ -d "$dir" ]; then
             dir_name=$(basename "${dir%/}")
-            zip_name="${dir_name}.zip"
-            echo "Packaging contents of $dir to $zip_name"
-            
+            zip_name="EZ-Clean-${dir_name}.zip"
+            echo "Packaging $dir to $zip_name"
             cd "$dir_name"
             zip -r "../$zip_name" .
             cd ..
-            
-            echo "Created: $zip_name"
           fi
         done
-        echo "=== Built packages ==="
         ls -la *.zip
 
-    - name: Upload module artifacts
+    - name: Upload artifacts
       uses: actions/upload-artifact@v4
       if: steps.check_build.outputs.should_build == 'true'
       with:
         name: EZ-Clean-${{ matrix.module_type }}-${{ matrix.arch }}
-        path: build/${{ matrix.module_type }}_${{ matrix.arch }}.zip
+        path: build/EZ-Clean-${{ matrix.module_type }}_${{ matrix.arch }}.zip
         retention-days: 1
-
-    - name: Upload updated JSON files
-      uses: actions/upload-artifact@v4
-      if: steps.check_build.outputs.should_build == 'true'
-      with:
-        name: updated-json-${{ matrix.module_type }}-${{ matrix.arch }}
-        path: ${{ matrix.module_type }}/${{ matrix.json_file }}
-        retention-days: 1
-
-  update-repository:
-    runs-on: ubuntu-latest
-    needs: build
-    if: always() && (needs.build.result == 'success' || needs.build.result == 'skipped')
-    
-    permissions:
-      contents: write
-    
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-        fetch-depth: 0
-
-    - name: Download all JSON artifacts
-      uses: actions/download-artifact@v4
-      with:
-        path: json-changes
-        pattern: updated-json-*
-        merge-multiple: true
-
-    - name: Apply JSON changes
-      run: |
-        # 复制更新的 JSON 文件到对应位置
-        if [ -d "json-changes" ]; then
-          echo "Applying JSON changes..."
-          find json-changes -name "*.json" -exec cp -v {} . \;
-          echo "Updated JSON files:"
-          find basic multi -name "*.json" 2>/dev/null | sort
-        else
-          echo "No JSON changes to apply"
-        fi
-
-    - name: Commit and push updated JSON files
-      run: |
-        git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
-        git config --local user.name "github-actions[bot]"
-        
-        # 检查是否有变更
-        if git diff --quiet; then
-          echo "No changes to commit"
-        else
-          git add basic/arm.json basic/arm64.json multi/arm.json multi/arm64.json
-          git commit -m "ci: update JSON files for version ${{ needs.build.outputs.VERSION }}"
-          git push
-          echo "Successfully updated JSON files"
-        fi
 
   release:
     runs-on: ubuntu-latest
-    needs: [build, update-repository]
+    needs: [build, update-json-files]
     if: always() && (needs.build.result == 'success' || needs.build.result == 'skipped')
     
     steps:
-    - name: Download all module artifacts
+    - name: Download all artifacts
       uses: actions/download-artifact@v4
       with:
         path: artifacts
         pattern: EZ-Clean-*
         merge-multiple: true
 
-    - name: Determine version
-      id: version
-      run: |
-        if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-          echo "VERSION=${{ github.event.inputs.release_version }}" >> $GITHUB_OUTPUT
-        else
-          echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-        fi
-
     - name: List downloaded artifacts
       run: |
         echo "=== Downloaded artifacts ==="
         find artifacts -name "*.zip" | sort
-        echo "=== Total files ==="
-        find artifacts -name "*.zip" | wc -l
 
     - name: Create Release
       if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: ${{ steps.version.outputs.VERSION }}
+        tag_name: ${{ needs.version-setup.outputs.version }}
         files: artifacts/**/*.zip
         body: |
-          # EZ-Clean Module Release ${{ steps.version.outputs.VERSION }}
-          
+          # EZ-Clean Module Release ${{ needs.version-setup.outputs.version }}
           ## 说明
           请根据CPU架构下载对应版本的模块包！支持magisk和kernelsu刷入。
           
@@ -295,5 +238,4 @@ jobs:
           
           ## 构建信息
           - 触发方式: ${{ github.event_name }}
-          - 构建时间: ${{ github.context.timestamp }}
           - 版本: ${{ steps.version.outputs.VERSION }}
