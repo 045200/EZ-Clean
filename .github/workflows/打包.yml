@@ -8,6 +8,10 @@ on:
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
+    permissions:
+      actions: write  # 授予删除工作流记录的权限
+      contents: write # 授予发布Release的权限
+
     steps:
       - name: 拉取仓库代码
         uses: actions/checkout@v4
@@ -25,21 +29,16 @@ jobs:
         with:
           go-version: '1.22.x'
 
-      # 1. 新增：创建单独文件夹存放编译产物
-      - name: 创建产物存放文件夹（普通版、多功能版）
+      - name: 创建产物存放文件夹
         run: |
           cd $GITHUB_WORKSPACE
-          mkdir -p 普通版  # 创建“普通版”文件夹
-          mkdir -p 多功能版  # 创建“多功能版”文件夹
+          mkdir -p 普通版 多功能版
           echo "产物文件夹创建完成：普通版/、多功能版/"
 
-      # 2. 调整：编译产物放入对应文件夹，名称统一为“EZ”
-      - name: 编译Go文件（分别输出到对应文件夹，产物名均为EZ）
+      - name: 编译Go文件
         run: |
           cd $GITHUB_WORKSPACE/源码
-          # main.go → 根目录/普通版/EZ
           go build -o ../普通版/EZ main.go
-          # ez.go → 根目录/多功能版/EZ
           go build -o ../多功能版/EZ ez.go
           echo "编译完成：普通版/EZ、多功能版/EZ"
 
@@ -53,28 +52,23 @@ jobs:
           git push origin $FIXED_TAG --force
           echo "标签 $FIXED_TAG 已更新"
 
-      # 3. 调整：打包排除“普通版/”“多功能版/”文件夹，且只包含对应产物
-      - name: 打包双版本压缩包（排除产物文件夹，仅含对应EZ及其他文件）
+      - name: 打包双版本压缩包
         run: |
           cd $GITHUB_WORKSPACE
-          # 普通版压缩包：仅复制“普通版/EZ”到根目录临时位置，排除产物文件夹
-          cp 普通版/EZ ./EZ  # 临时将普通版的EZ复制到根目录（命名为EZ）
-          zip -r EZ-Clean-普通版.zip . -x ".git/*" ".github/*" "node_modules/*" "源码/*" "普通版/*" "多功能版/*"  # 排除两个产物文件夹
-          rm ./EZ  # 删除根目录临时EZ
-          
-          # 多功能版压缩包：同理，复制多功能版的EZ到根目录临时位置
+          # 普通版打包
+          cp 普通版/EZ ./EZ
+          zip -r EZ-Clean-普通版.zip . -x ".git/*" ".github/*" "node_modules/*" "源码/*" "普通版/*" "多功能版/*"
+          rm ./EZ
+          # 多功能版打包
           cp 多功能版/EZ ./EZ
-          zip -r EZ-Clean-多功能版.zip . -x ".git/*" ".github/*" "node_modules/*" "源码/*" "普通版/*" "多功能版/*"  # 排除两个产物文件夹
-          rm ./EZ  # 删除根目录临时EZ
-          
-          echo "双压缩包打包完成：EZ-Clean-普通版.zip（含EZ）、EZ-Clean-多功能版.zip（含EZ）"
+          zip -r EZ-Clean-多功能版.zip . -x ".git/*" ".github/*" "node_modules/*" "源码/*" "普通版/*" "多功能版/*"
+          rm ./EZ
+          echo "双压缩包打包完成"
 
-      # 4. 新增：打包后删除两个产物文件夹（清理残留）
       - name: 打包后删除产物文件夹
         run: |
           cd $GITHUB_WORKSPACE
-          rm -rf 普通版  # 彻底删除“普通版”文件夹
-          rm -rf 多功能版  # 彻底删除“多功能版”文件夹
+          rm -rf 普通版 多功能版
           echo "产物文件夹已删除，清理完成"
 
       - name: 生成Release说明文档
@@ -93,7 +87,7 @@ jobs:
           - 若需查看源码，请从仓库主分支获取" > RELEASE_NOTES.md
           echo "Release说明文档生成完成"
 
-      - name: 发布Release并上传双版本压缩包（支持覆盖）
+      - name: 发布Release并上传双版本压缩包
         uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -103,7 +97,22 @@ jobs:
           body_path: RELEASE_NOTES.md
           draft: false
           prerelease: false
-          overwrite: true
+          overwrite_files: true  # 关键：v2版本正确参数
           files: |
             ${{ github.workspace }}/EZ-Clean-普通版.zip
             ${{ github.workspace }}/EZ-Clean-多功能版.zip
+
+  # 新增：工作流记录清理任务
+  cleanup:
+    runs-on: ubuntu-latest
+    needs: build-and-release  # 确保在发布完成后执行清理
+    steps:
+      - name: 删除旧工作流记录
+        uses: matt-rakes/delete-workflow-runs@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          retain_days: 0  # 强制删除所有超过0天的记录
+          delete_workflow_by_state_pattern: 'completed'  # 仅删除已完成的工作流
+          delete_run_by_conclusion_pattern: 'success,failure'  # 保留成功和失败的记录
+          dry_run: false  # 直接执行删除操作
