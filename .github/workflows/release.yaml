@@ -1,0 +1,260 @@
+name: EZ-Clean-Android10-CGO
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+env:
+  GO_VERSION: '1.21'
+  MODULE_NAME: 'EZ-Clean'
+
+jobs:
+  build-multi-arch:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goarch: arm64
+            android_abi: arm64-v8a
+            toolchain_triple: aarch64-linux-android29
+          - goarch: arm
+            android_abi: armeabi-v7a
+            toolchain_triple: armv7a-linux-androideabi29
+          - goarch: amd64
+            android_abi: x86_64
+            toolchain_triple: x86_64-linux-android29
+          - goarch: 386
+            android_abi: x86
+            toolchain_triple: i686-linux-android29
+        variant: [basic, full]
+      fail-fast: false
+
+    name: Build ${{ matrix.variant }} for ${{ matrix.android_abi }}
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: 'r25b'
+
+      - name: Install basic dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zip file jq
+
+      - name: Initialize Go module
+        run: |
+          if [ ! -f "go.mod" ]; then
+            go mod init github.com/${{ github.repository }}
+          fi
+          go mod tidy
+
+      - name: Locate source files
+        id: source_files
+        run: |
+          if [ -f "source/main.go" ]; then
+            echo "MAIN_GO=source/main.go" >> $GITHUB_OUTPUT
+            echo "EZ_GO=source/ez.go" >> $GITHUB_OUTPUT
+          elif [ -f "main.go" ]; then
+            echo "MAIN_GO=main.go" >> $GITHUB_OUTPUT
+            echo "EZ_GO=ez.go" >> $GITHUB_OUTPUT
+          else
+            echo "错误: 未找到Go源文件"
+            exit 1
+          fi
+
+      - name: Setup build parameters
+        id: build_params
+        run: |
+          echo "BINARY_NAME=EZ-${{ matrix.variant }}-${{ matrix.android_abi }}" >> $GITHUB_OUTPUT
+          echo "ZIP_NAME=EZ-Clean-${{ matrix.variant }}-${{ matrix.android_abi }}.zip" >> $GITHUB_OUTPUT
+          echo "MODULE_DIR=module-${{ matrix.variant }}-${{ matrix.android_abi }}" >> $GITHUB_OUTPUT
+
+      - name: Build with CGO for Android
+        env:
+          GOOS: android
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 1
+          CC: ${{ steps.setup-ndk.outputs.NDK_PATH }}/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.toolchain_triple }}-clang
+        run: |
+          if [ "${{ matrix.variant }}" = "basic" ]; then
+            SOURCE_FILE="${{ steps.source_files.outputs.MAIN_GO }}"
+          else
+            SOURCE_FILE="${{ steps.source_files.outputs.EZ_GO }}"
+          fi
+          
+          echo "编译 ${{ matrix.variant }} 版本，架构 ${{ matrix.android_abi }}"
+          echo "使用编译器: $CC"
+          
+          # 使用CGO编译[citation:1]
+          go build -ldflags="-s -w" -o "${{ steps.build_params.outputs.BINARY_NAME }}" "$SOURCE_FILE"
+          
+          if [ -f "${{ steps.build_params.outputs.BINARY_NAME }}" ]; then
+            echo "✅ 编译成功"
+            file "${{ steps.build_params.outputs.BINARY_NAME }}"
+          else
+            echo "❌ 编译失败"
+            exit 1
+          fi
+
+      - name: Update module.prop
+        run: |
+          if [ -f "module.prop" ]; then
+            cp module.prop module.prop.backup
+            echo "architecture=${{ matrix.android_abi }}" >> module.prop
+            echo "versionCode=$(( $(date +%s) / 100 ))" >> module.prop
+            echo "updateJson=https://github.com/${{ github.repository }}/releases/latest/download/update-${{ matrix.android_abi }}.json" >> module.prop
+          else
+            cat > module.prop << EOF
+            id=EZ-Clean
+            name=EZ Clean
+            version=v1.0.0
+            versionCode=$(( $(date +%s) / 100 ))
+            author=GitHub Actions
+            description=Multi-arch EZ Clean module
+            architecture=${{ matrix.android_abi }}
+            updateJson=https://github.com/${{ github.repository }}/releases/latest/download/update-${{ matrix.android_abi }}.json
+            EOF
+          fi
+
+      - name: Prepare module files
+        run: |
+          mkdir -p ${{ steps.build_params.outputs.MODULE_DIR }}
+          
+          # 复制模块文件
+          [ -d "META-INF" ] && cp -r META-INF/ ${{ steps.build_params.outputs.MODULE_DIR }}/
+          cp module.prop ${{ steps.build_params.outputs.MODULE_DIR }}/
+          [ -f "customize.sh" ] && cp customize.sh ${{ steps.build_params.outputs.MODULE_DIR }}/
+          [ -f "service.sh" ] && cp service.sh ${{ steps.build_params.outputs.MODULE_DIR }}/
+          [ -f "reload.sh" ] && cp reload.sh ${{ steps.build_params.outputs.MODULE_DIR }}/
+          cp *.conf ${{ steps.build_params.outputs.MODULE_DIR }}/ 2>/dev/null || true
+          
+          # 复制二进制文件并重命名为EZ
+          cp ${{ steps.build_params.outputs.BINARY_NAME }} ${{ steps.build_params.outputs.MODULE_DIR }}/EZ
+          chmod +x ${{ steps.build_params.outputs.MODULE_DIR }}/EZ
+          
+          echo "模块文件准备完成"
+
+      - name: Package module
+        run: |
+          cd ${{ steps.build_params.outputs.MODULE_DIR }}
+          zip -r ../${{ steps.build_params.outputs.ZIP_NAME }} .
+          cd ..
+          echo "打包完成: ${{ steps.build_params.outputs.ZIP_NAME }}"
+
+      - name: Generate update.json
+        run: |
+          TIMESTAMP=$(date +%s)
+          cat > update-${{ matrix.android_abi }}.json << EOF
+          {
+            "version": "v$(date +%Y.%m.%d)",
+            "versionCode": $(( TIMESTAMP / 100 )),
+            "zipUrl": "https://github.com/${{ github.repository }}/releases/latest/download/${{ steps.build_params.outputs.ZIP_NAME }}",
+            "changelog": "https://github.com/${{ github.repository }}/releases/tag/${GITHUB_REF_NAME:-latest}",
+            "architecture": "${{ matrix.android_abi }}"
+          }
+          EOF
+
+      - name: Restore module.prop
+        run: |
+          [ -f "module.prop.backup" ] && mv module.prop.backup module.prop
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.variant }}-${{ matrix.android_abi }}
+          path: |
+            ${{ steps.build_params.outputs.ZIP_NAME }}
+            update-${{ matrix.android_abi }}.json
+          retention-days: 7
+
+  create-release:
+    runs-on: ubuntu-latest
+    needs: build-multi-arch
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: '*'
+          merge-multiple: true
+
+      - name: Create release notes
+        run: |
+          cat > RELEASE_NOTES.md << EOF
+          # EZ-Clean 多架构版本发布
+          
+          **构建信息**
+          - 发布时间: $(date +'%Y-%m-%d %H:%M:%S')
+          - 提交: \`${{ github.sha }}\`
+          - 触发方式: ${{ github.event_name }}
+          
+          ## 支持的CPU架构
+          | 架构 | 支持设备 | Android 10+ 兼容性 |
+          |------|----------|-------------------|
+          | **arm64-v8a** | 现代64位ARM设备 | ✅ 完全兼容 |
+          | **armeabi-v7a** | 旧款32位ARM设备 | ✅ 兼容 |
+          | **x86_64** | 64位Intel/AMD设备 | ✅ 兼容 |
+          | **x86** | 32位Intel设备 | ✅ 兼容 |
+          
+          ## 版本说明
+          - **基础版**: 核心清理功能，体积更小
+          - **完整版**: 扩展功能集，功能全面
+          
+          ## 文件列表
+          $(echo -e "\n")
+          $(for file in artifacts/*.zip; do
+            if [ -f "$file" ]; then
+              SIZE=\$(du -h "$file" | cut -f1)
+              echo "  - **\$(basename \$file)** (\$SIZE)"
+            fi
+          done)
+          EOF
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "android10-$(date +%Y%m%d-%H%M%S)"
+          name: "EZ-Clean Android 10+ 版本 $(date +'%Y.%m.%d')"
+          body_path: RELEASE_NOTES.md
+          draft: false
+          prerelease: false
+          files: |
+            artifacts/*.zip
+            artifacts/*.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
+  workflow-cleanup:
+    runs-on: ubuntu-latest
+    needs: create-release
+    if: always() && needs.create-release.result != 'skipped'
+    permissions:
+      actions: write
+    steps:
+      - name: Clean old workflow runs
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          retain_days: 0
+          retain_runs: 1
+          keep_minimum_runs: 0          
