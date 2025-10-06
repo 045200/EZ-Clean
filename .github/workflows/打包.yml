@@ -20,24 +20,34 @@ jobs:
           git config --global user.email "${{ github.actor }}@users.noreply.github.com"
           echo "Git身份配置完成"
 
+      # 新增步骤1：安装Go环境（用于编译main.go）
+      - name: 安装Go环境
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.x'  # 适配主流Go版本，x自动匹配最新补丁版
+
+      # 新增步骤2：编译/源码/main.go，输出EZ到根目录
+      - name: 编译main.go生成EZ（输出至根目录）
+        run: |
+          cd $GITHUB_WORKSPACE/源码  # 进入源码文件夹
+          go build -o ../EZ main.go   # 编译生成"EZ"可执行文件，输出到根目录
+          echo "编译完成：/源码/main.go → 根目录/EZ"
+
       - name: 创建/覆盖module标签（固定标签，强制覆盖旧标签）
         run: |
           FIXED_TAG="module"  # 固定标签为module
           TRIGGER_TYPE=$([ "${{ github.event_name }}" == "push" ] && echo "自动触发" || echo "手动触发")
-          # 删除本地旧标签（若存在），避免标签重复报错
           git tag -d $FIXED_TAG 2>/dev/null || true
-          # 删除远程旧标签（若存在），实现覆盖效果
           git push origin --delete $FIXED_TAG 2>/dev/null || true
-          # 创建新module标签并推送（--force确保覆盖）
           git tag -a $FIXED_TAG -m "EZ-Clean-$TRIGGER_TYPE（固定标签：$FIXED_TAG，时间：$(date +'%Y-%m-%d %H:%M:%S')）"
           git push origin $FIXED_TAG --force
           echo "固定标签 $FIXED_TAG 已创建/覆盖并推送"
 
-      - name: 打包为EZ-Clean.zip（跳过源码文件夹）
+      - name: 打包为EZ-Clean.zip（包含根目录EZ，跳过源码文件夹）
         run: |
           cd $GITHUB_WORKSPACE
           zip -r EZ-Clean.zip . -x ".git/*" ".github/*" "node_modules/*" "源码/*"
-          echo "ZIP包打包完成（已跳过‘源码’文件夹）：EZ-Clean.zip"
+          echo "ZIP包打包完成：已包含根目录EZ文件，跳过‘源码’文件夹"
 
       - name: 创建/更新GitHub Release（使用module标签）
         uses: actions/create-release@v1
@@ -45,11 +55,10 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         id: create_release
         with:
-          tag_name: "module"  # 固定使用module标签
-          release_name: EZ-Clean-module  # 固定Release名称
+          tag_name: "module"
+          release_name: EZ-Clean-module
           draft: false
           prerelease: false
-          # 若module标签已存在Release，此参数可覆盖旧Release内容
           overwrite: true
 
       - name: 上传EZ-Clean.zip到Release（覆盖旧文件）
@@ -61,5 +70,4 @@ jobs:
           asset_path: ${{ github.workspace }}/EZ-Clean.zip
           asset_name: EZ-Clean.zip
           asset_content_type: application/zip
-          # 覆盖同名资产（确保每次发布的文件是最新的）
           overwrite: true
