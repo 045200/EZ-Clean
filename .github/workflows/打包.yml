@@ -6,13 +6,11 @@ on:
   workflow_dispatch:
 
 jobs:
-  # 1. 核心：编译+发布流程（含Release修复）
   build-and-release:
     runs-on: ubuntu-latest
     permissions:
-      actions: write        # 用于清理工作流记录
-      contents: write       # 用于发布Release、操作标签
-      pull-requests: write
+      actions: write
+      contents: write
     steps:
       - name: 拉取仓库代码
         uses: actions/checkout@v4
@@ -30,109 +28,116 @@ jobs:
         with:
           go-version: '1.22.x'
 
-      - name: 创建产物存放文件夹
+      # 【新增】安装jq工具（用于查询旧Release ID，解决删除失败问题）
+      - name: 安装jq（处理JSON数据）
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: 创建产物存放文件夹（英文命名，与压缩包对应）
         run: |
           cd $GITHUB_WORKSPACE
-          mkdir -p 普通版 多功能版
-          echo "产物文件夹创建完成"
+          mkdir -p ez-basic ez-full  # 文件夹名：基础版/完整版
+          echo "产物文件夹创建完成：ez-basic/、ez-full/"
 
-      - name: 编译Go文件（产物名均为EZ）
+      - name: 编译Go文件（产物名均为EZ，存对应文件夹）
         run: |
           cd $GITHUB_WORKSPACE/源码
-          go build -o ../普通版/EZ main.go
-          go build -o ../多功能版/EZ ez.go
-          echo "编译完成：普通版/EZ、多功能版/EZ"
+          go build -o ../ez-basic/EZ main.go  # 核心功能→ez-basic/EZ
+          go build -o ../ez-full/EZ ez.go     # 扩展功能→ez-full/EZ
+          echo "编译完成：ez-basic/EZ、ez-full/EZ"
 
       - name: 创建/覆盖module标签
         run: |
           FIXED_TAG="module"
-          TRIGGER_TYPE=$([ "${{ github.event_name }}" == "push" ] && echo "自动触发" || echo "手动触发")
+          TRIGGER_TYPE=$([ "${{ github.event_name }}" == "push" ] && echo "Auto" || echo "Manual")
           git tag -d $FIXED_TAG 2>/dev/null || true
           git push origin --delete $FIXED_TAG 2>/dev/null || true
-          git tag -a $FIXED_TAG -m "EZ-Clean-$TRIGGER_TYPE（时间：$(date +'%Y-%m-%d %H:%M:%S')）"
+          git tag -a $FIXED_TAG -m "EZ-Clean-$TRIGGER_TYPE（$(date +'%Y-%m-%d %H:%M:%S')）"
           git push origin $FIXED_TAG --force
           echo "标签 $FIXED_TAG 已更新"
 
+      # 【核心修改】压缩包名改英文：Basic（基础版）、Full（完整版）
       - name: 打包双版本压缩包（排除产物文件夹）
         run: |
           cd $GITHUB_WORKSPACE
-          # 普通版打包
-          cp 普通版/EZ ./EZ
-          zip -r EZ-Clean-普通版.zip . -x ".git/*" ".github/*" "node_modules/*" "源码/*" "普通版/*" "多功能版/*"
+          # 基础版打包：EZ-Clean-Basic.zip
+          cp ez-basic/EZ ./EZ
+          zip -r EZ-Clean-Basic.zip . -x ".git/*" ".github/*" "node_modules/*" "源码/*" "ez-basic/*" "ez-full/*"
           rm ./EZ
-          # 多功能版打包
-          cp 多功能版/EZ ./EZ
-          zip -r EZ-Clean-多功能版.zip . -x ".git/*" ".github/*" "node_modules/*" "源码/*" "普通版/*" "多功能版/*"
+          # 完整版打包：EZ-Clean-Full.zip
+          cp ez-full/EZ ./EZ
+          zip -r EZ-Clean-Full.zip . -x ".git/*" ".github/*" "node_modules/*" "源码/*" "ez-basic/*" "ez-full/*"
           rm ./EZ
-          echo "双压缩包打包完成"
+          echo "双压缩包打包完成：EZ-Clean-Basic.zip、EZ-Clean-Full.zip"
 
       - name: 打包后删除产物文件夹
         run: |
           cd $GITHUB_WORKSPACE
-          rm -rf 普通版 多功能版
+          rm -rf ez-basic ez-full
           echo "产物文件夹已删除"
 
-      - name: 生成Release说明文档
+      # 【同步修改】Release说明文档用英文描述压缩包
+      - name: 生成Release说明文档（英文备注压缩包）
         run: |
-          echo "## EZ-Clean 发布说明
-          - **发布类型**：${{ github.event_name == 'push' && 'main分支自动发布' || '手动触发发布' }}
-          - **发布时间**：$(date +'%Y-%m-%d %H:%M:%S')
-          - **标签版本**：module（固定标签，每次发布覆盖更新）
+          echo "## EZ-Clean Release Notes
+          - **Release Type**: ${{ github.event_name == 'push' && 'Main Branch Auto-Release' || 'Manual Trigger Release' }}
+          - **Release Time**: $(date +'%Y-%m-%d %H:%M:%S')
+          - **Tag Version**: module (Fixed tag, overwritten on each release)
           
-          ### 压缩包说明
-          1. **EZ-Clean-普通版.zip**：包含核心功能二进制文件 `EZ`
-          2. **EZ-Clean-多功能版.zip**：包含扩展功能二进制文件 `EZ`
+          ### Zip Package Description
+          1. **EZ-Clean-Basic.zip**: Contains core-function binary file `EZ` (compiled from /源码/main.go)
+          2. **EZ-Clean-Full.zip**: Contains extended-function binary file `EZ` (compiled from /源码/ez.go)
           
-          ### 注意事项
-          - 压缩包已排除源码、Git相关文件及临时产物文件夹，可直接提取使用
-          - 若需查看源码，请从仓库主分支获取" > RELEASE_NOTES.md
-          echo "Release说明文档生成完成"
+          ### Notes
+          - Source code, Git files and temporary folders are excluded from the zip packages (ready to use)
+          - For source code, please fetch from the main branch of the repository" > RELEASE_NOTES.md
+          echo "Release notes generated"
 
-      - name: 删除旧Release（解决资产覆盖冲突）
+      # 【确保生效】删除旧Release（依赖jq查询ID，解决资产覆盖冲突）
+      - name: 删除旧Release（彻底清理资产缓存）
         run: |
           FIXED_TAG="module"
-          # 查旧Release ID
-          RELEASE_ID=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/${{ github.repository }}/releases/tags/$FIXED_TAG" | jq -r .id)
-          # 删旧Release
-          if [ "$RELEASE_ID" != "null" ]; then
+          # 1. 查询旧Release ID（依赖jq解析JSON）
+          RELEASE_RESPONSE=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/$FIXED_TAG")
+          RELEASE_ID=$(echo "$RELEASE_RESPONSE" | jq -r .id)
+          # 2. 若存在旧Release则删除
+          if [ "$RELEASE_ID" != "null" ] && [ -n "$RELEASE_ID" ]; then
             curl -s -X DELETE -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
               "https://api.github.com/repos/${{ github.repository }}/releases/$RELEASE_ID"
-            echo "旧Release（ID: $RELEASE_ID）已删除"
+            echo "Old Release (ID: $RELEASE_ID) deleted successfully"
           else
-            echo "无旧Release需删除"
+            echo "No old Release to delete"
           fi
 
-      - name: 发布Release（固定名称+资产覆盖）
+      # 【最终发布】用英文压缩包名上传，确保无中文备注
+      - name: 发布Release（英文压缩包+资产覆盖）
         uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: "module"
-          name: "EZ-Clean-双版本发布"  # 固定名称，无动态时间
+          name: "EZ-Clean-Dual-Version-Release"  # 固定英文名称，无动态时间
           body_path: RELEASE_NOTES.md
           draft: false
           prerelease: false
           overwrite_files: true
           files: |
-            ${{ github.workspace }}/EZ-Clean-普通版.zip
-            ${{ github.workspace }}/EZ-Clean-多功能版.zip
+            ${{ github.workspace }}/EZ-Clean-Basic.zip  # 英文压缩包1
+            ${{ github.workspace }}/EZ-Clean-Full.zip    # 英文压缩包2
 
-  # 2. 恢复：工作流记录保留/清理流程（按你的需求配置）
+  # 保留工作流记录清理步骤
   workflow-cleanup:
     runs-on: ubuntu-latest
-    needs: build-and-release  # 确保发布完成后再清理
+    needs: build-and-release
     permissions:
-      actions: write  # 必须权限：删除工作流记录
+      actions: write
     steps:
       - name: 清理旧工作流记录（保留运行中/成功/失败，0天保留）
         uses: matt-rakes/delete-workflow-runs@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           repository: ${{ github.repository }}
-          retain_days: 0  # 核心：超过0天的记录全部删除（即仅保留当天记录）
-          # 仅删除“已完成”状态的工作流（保留“运行中”状态）
+          retain_days: 0
           delete_workflow_by_state_pattern: 'completed'
-          # 仅保留“成功/失败”结论的记录（删除“取消”等其他结论）
           delete_run_by_conclusion_pattern: 'success,failure'
-          dry_run: false  # 关闭预览，实际执行删除
+          dry_run: false
