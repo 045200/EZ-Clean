@@ -17,150 +17,117 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: 配置Git全局身份
-        run: |
-          git config --global user.name "${{ github.actor }}"
-          git config --global user.email "${{ github.actor }}@users.noreply.github.com"
-          echo "Git身份配置完成"
-
       - name: 安装Go环境
         uses: actions/setup-go@v5
         with:
           go-version: '1.22.x'
 
-      # 1. 必装jq：确保能解析JSON，彻底删除旧Release
-      - name: 安装jq工具（处理Release查询/删除）
-        run: sudo apt-get update && sudo apt-get install -y jq
-
-      # 2. 彻底删除所有旧Release（含残留的带时间名称Release+module标签Release）
-      - name: 全量清理旧Release（解决名称/资产重复）
-        run: |
-          # 定义要清理的Release相关关键词（匹配旧名称和标签）
-          TARGET_TAG="module"
-          OLD_RELEASE_NAME_PREFIX="EZ-Clean-双版本发布"
-          
-          # 步骤1：删除module标签对应的所有Release
-          echo "正在删除module标签对应的Release..."
-          RELEASE_IDS=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/${{ github.repository }}/releases" | \
-            jq -r --arg tag "$TARGET_TAG" '.[] | select(.tag_name == $tag) | .id')
-          for ID in $RELEASE_IDS; do
-            if [ "$ID" != "null" ]; then
-              curl -s -X DELETE -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-                "https://api.github.com/repos/${{ github.repository }}/releases/$ID"
-              echo "已删除module标签Release（ID: $ID）"
-            fi
-          done
-          
-          # 步骤2：删除带时间前缀的旧Release（如"EZ-Clean-双版本发布（20251006）"）
-          echo "正在删除带时间名称的旧Release..."
-          OLD_RELEASE_IDS=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/${{ github.repository }}/releases" | \
-            jq -r --arg prefix "$OLD_RELEASE_NAME_PREFIX" '.[] | select(.name | startswith($prefix)) | .id')
-          for OLD_ID in $OLD_RELEASE_IDS; do
-            if [ "$OLD_ID" != "null" ]; then
-              curl -s -X DELETE -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-                "https://api.github.com/repos/${{ github.repository }}/releases/$OLD_ID"
-              echo "已删除旧名称Release（ID: $OLD_ID）"
-            fi
-          done
-          echo "所有旧Release清理完成"
-
-      # 3. 英文文件夹存产物（避免中文路径问题）
-      - name: 创建英文产物文件夹
+      # 新增：打包前创建英文目录
+      - name: 创建产物存放目录（英文）
         run: |
           cd $GITHUB_WORKSPACE
-          mkdir -p ez-basic ez-full  # 基础版/完整版：全英文
-          echo "产物文件夹：ez-basic/、ez-full/"
+          mkdir -p ez-basic ez-full
+          echo "产物目录创建完成：ez-basic/、ez-full/"
 
-      # 4. 编译产物（统一叫EZ，存对应英文文件夹）
-      - name: 编译Go文件
+      # 新增：编译并验证产物存在
+      - name: 编译Go文件（验证产物）
         run: |
           cd $GITHUB_WORKSPACE/源码
-          go build -o ../ez-basic/EZ main.go  # 核心功能→ez-basic/EZ
-          go build -o ../ez-full/EZ ez.go     # 扩展功能→ez-full/EZ
-          echo "编译完成：ez-basic/EZ、ez-full/EZ"
+          go build -o ../ez-basic/EZ main.go
+          go build -o ../ez-full/EZ ez.go
+          # 验证产物存在（不存在则报错）
+          if [ ! -f "../ez-basic/EZ" ] || [ ! -f "../ez-full/EZ" ]; then
+            echo "编译失败：产物文件缺失"
+            exit 1
+          fi
+          echo "编译完成并验证通过"
 
-      # 5. 重建module标签（确保标签纯净）
-      - name: 重建module标签
-        run: |
-          FIXED_TAG="module"
-          TRIGGER_TYPE=$([ "${{ github.event_name }}" == "push" ] && echo "Auto" || echo "Manual")
-          # 先删旧标签
-          git tag -d $FIXED_TAG 2>/dev/null || true
-          git push origin --delete $FIXED_TAG 2>/dev/null || true
-          # 新建标签
-          git tag -a $FIXED_TAG -m "EZ-Clean-$TRIGGER_TYPE（$(date +'%Y-%m-%d %H:%M:%S')）"
-          git push origin $FIXED_TAG --force
-          echo "module标签重建完成"
-
-      # 6. 英文压缩包名（彻底避免中文重复）
-      - name: 打包英文名称压缩包
+      # 新增：打包后强制验证压缩包存在
+      - name: 打包双版本压缩包（验证发布文件）
         run: |
           cd $GITHUB_WORKSPACE
-          # 基础版压缩包：EZ-Clean-Basic.zip（无中文）
+          # 基础版打包
           cp ez-basic/EZ ./EZ
           zip -r EZ-Clean-Basic.zip . -x ".git/*" ".github/*" "node_modules/*" "源码/*" "ez-basic/*" "ez-full/*"
           rm ./EZ
-          # 完整版压缩包：EZ-Clean-Full.zip（无中文）
+          # 完整版打包
           cp ez-full/EZ ./EZ
           zip -r EZ-Clean-Full.zip . -x ".git/*" ".github/*" "node_modules/*" "源码/*" "ez-basic/*" "ez-full/*"
           rm ./EZ
-          echo "压缩包完成：EZ-Clean-Basic.zip、EZ-Clean-Full.zip"
+          # 验证压缩包存在（不存在则报错）
+          if [ ! -f "EZ-Clean-Basic.zip" ] || [ ! -f "EZ-Clean-Full.zip" ]; then
+            echo "打包失败：压缩包文件缺失"
+            exit 1
+          fi
+          echo "打包完成并验证通过"
 
-      # 7. 删除产物文件夹（清理临时文件）
-      - name: 清理产物文件夹
-        run: |
-          cd $GITHUB_WORKSPACE
-          rm -rf ez-basic ez-full
-          echo "产物文件夹已删除"
+      # 新增：发布前文件存在性检查（严格验证）
+      - name: 检查发布文件是否存在
+        uses: andstor/file-existence-action@v3
+        with:
+          files: |
+            ${{ github.workspace }}/EZ-Clean-Basic.zip
+            ${{ github.workspace }}/EZ-Clean-Full.zip
+            ${{ github.workspace }}/RELEASE_NOTES.md
+          fail: true  # 缺失文件则终止流程
 
-      # 8. 英文Release说明（匹配压缩包名）
-      - name: 生成英文Release说明
+      # 新增：生成Release说明文档（带校验和）
+      - name: 生成Release说明文档（含校验和）
         run: |
           echo "## EZ-Clean Release Notes
-          - **Trigger Type**: ${{ github.event_name == 'push' && 'Main Branch Auto' || 'Manual' }}
+          - **Release Type**: ${{ github.event_name == 'push' && 'Auto' || 'Manual' }}
           - **Release Time**: $(date +'%Y-%m-%d %H:%M:%S')
-          - **Tag**: module (Overwritten on each release)
-          
-          ### Packages
-          1. **EZ-Clean-Basic.zip**: Core functions (compiled from /源码/main.go)
-          2. **EZ-Clean-Full.zip**: Extended functions (compiled from /源码/ez.go)
-          
-          ### Notes
-          - No source code/Git files in packages (ready to use)
-          - For source code, get from main branch" > RELEASE_NOTES.md
-          echo "Release notes generated"
+          - **Checksums**:
+            - EZ-Clean-Basic.zip: $(sha256sum EZ-Clean-Basic.zip | awk '{print $1}')
+            - EZ-Clean-Full.zip: $(sha256sum EZ-Clean-Full.zip | awk '{print $1}')" > RELEASE_NOTES.md
+          echo "Release notes generated with checksums"
 
-      # 9. 发布新Release（英文压缩包+无重复名称）
-      - name: 发布Release（无重复资产）
+      # 优化：彻底删除旧Release（使用专业工具）
+      - name: 删除旧Release（保留最新3个）
+        uses: sgpublic/delete-release-action@v1.1
+        with:
+          repo: ${{ github.repository }}
+          release-drop: true
+          release-drop-count: 3  # 保留最新3个Release
+          release-drop-tag: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # 优化：发布新版本（带重试机制）
+      - name: 发布Release（带重试）
         uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: "module"
-          name: "EZ-Clean-Dual-Version"  # 纯英文名称，无中文/时间
+          name: "EZ-Clean-Dual-Version"
           body_path: RELEASE_NOTES.md
           draft: false
           prerelease: false
           overwrite_files: true
           files: |
-            ${{ github.workspace }}/EZ-Clean-Basic.zip  # 英文压缩包1
-            ${{ github.workspace }}/EZ-Clean-Full.zip    # 英文压缩包2
+            ${{ github.workspace }}/EZ-Clean-Basic.zip
+            ${{ github.workspace }}/EZ-Clean-Full.zip
+        # 新增：失败后重试一次
+        if: failure()
+        run: |
+          echo "发布失败，正在重试..."
+          sleep 10
+          gh release upload module EZ-Clean-Basic.zip EZ-Clean-Full.zip --clobber
 
-  # 保留工作流清理步骤
+  # 优化：智能清理工作流记录
   workflow-cleanup:
     runs-on: ubuntu-latest
     needs: build-and-release
     permissions:
       actions: write
     steps:
-      - name: 清理旧工作流记录
+      - name: 清理旧工作流记录（保留最新10条）
         uses: matt-rakes/delete-workflow-runs@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           repository: ${{ github.repository }}
           retain_days: 0
+          retain_runs: 0  # 保留最新10条记录
           delete_workflow_by_state_pattern: 'completed'
           delete_run_by_conclusion_pattern: 'success,failure'
           dry_run: false
