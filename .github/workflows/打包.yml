@@ -1,233 +1,311 @@
-name: EZ-Clean-Auto-Manual-Release
+name: EZ-Clean-MultiArch-Release
 
 on:
   push:
     branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
   workflow_dispatch:
 
-# 添加并发控制以防止重复运行
+# 并发控制确保工作流稳定性
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: false
+
+env:
+  GO_VERSION: 'stable'
+  MODULE_NAME: 'EZ-Clean'
+  # 定义支持的CPU架构
+  ARCH_LIST: 'arm64-v8a armeabi-v7a x86_64 x86'
 
 jobs:
-  build-and-release:
+  # 多架构构建矩阵
+  build-multi-arch:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # 包含所有支持的架构
+        arch: [arm64-v8a, armeabi-v7a, x86_64, x86]
+        variant: [basic, full]
+      # 并行构建以提升效率[citation:2]
+      fail-fast: false
+      max-parallel: 8
+    
+    name: Build ${{ matrix.variant }} for ${{ matrix.arch }}
     permissions:
-      actions: write
       contents: write
+      
     steps:
-      # 1. 拉取代码
+      # 1. 代码检出
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
 
-      # 2. 安装依赖
+      # 2. 设置Go环境与缓存
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            **/go.sum
+
+      # 3. 依赖安装
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y jq zip
-          # 安装 Go
-          if ! command -v go &> /dev/null; then
-            echo "Installing Go..."
-            # 这里可以根据需要安装特定版本的Go
-          else
-            echo "Go is already installed"
-          fi
-          go version
+          sudo apt-get install -y jq zip file
 
-      # 3. 编译Go程序 - 修复了路径问题
-      - name: Build Go binaries
+      # 4. 初始化Go模块（如需要）
+      - name: Initialize Go module if needed
         run: |
-          echo "Building binaries..."
-          # 创建必要的目录（如果不存在）
-          mkdir -p 源码
-          
-          # 检查源文件是否存在
-          if [ ! -f "源码/main.go" ]; then
-            echo "错误: 源码/main.go 不存在"
-            echo "当前目录内容:"
-            ls -la
-            echo "源码目录内容:"
-            ls -la 源码/ || echo "源码目录不存在"
+          if [ ! -f "go.mod" ]; then
+            echo "初始化Go模块..."
+            go mod init github.com/${{ github.repository }}
+          fi
+          go mod tidy
+
+      # 5. 动态确定源文件路径
+      - name: Locate source files
+        id: source_files
+        run: |
+          if [ -f "源码/main.go" ]; then
+            echo "MAIN_GO=源码/main.go" >> $GITHUB_OUTPUT
+            echo "EZ_GO=源码/ez.go" >> $GITHUB_OUTPUT
+          elif [ -f "main.go" ]; then
+            echo "MAIN_GO=main.go" >> $GITHUB_OUTPUT
+            echo "EZ_GO=ez.go" >> $GITHUB_OUTPUT
+          else
+            echo "错误: 未找到Go源文件"
             exit 1
           fi
-          
-          # 编译基础版 (main.go)
-          echo "编译基础版..."
-          go build -o EZ-basic 源码/main.go
-          # 编译完整版 (ez.go)
-          echo "编译完整版..."
-          go build -o EZ-full 源码/ez.go
-          
-          # 验证编译结果
-          echo "编译结果:"
-          ls -l EZ-basic EZ-full
-          file EZ-basic EZ-full || true
 
-      # 4. 准备模块文件
+      # 6. 配置架构特定的Go环境变量[citation:3]
+      - name: Setup architecture environment
+        id: arch_env
+        run: |
+          case "${{ matrix.arch }}" in
+            arm64-v8a)
+              echo "GOARCH=arm64" >> $GITHUB_OUTPUT
+              echo "ABI=arm64-v8a" >> $GITHUB_OUTPUT
+              ;;
+            armeabi-v7a)
+              echo "GOARCH=arm" >> $GITHUB_OUTPUT
+              echo "ABI=armeabi-v7a" >> $GITHUB_OUTPUT
+              ;;
+            x86_64)
+              echo "GOARCH=amd64" >> $GITHUB_OUTPUT
+              echo "ABI=x86_64" >> $GITHUB_OUTPUT
+              ;;
+            x86)
+              echo "GOARCH=386" >> $GITHUB_OUTPUT
+              echo "ABI=x86" >> $GITHUB_OUTPUT
+              ;;
+          esac
+          echo "BINARY_NAME=EZ-${{ matrix.variant }}-${{ matrix.arch }}" >> $GITHUB_OUTPUT
+          echo "ZIP_NAME=EZ-Clean-${{ matrix.variant }}-${{ matrix.arch }}.zip" >> $GITHUB_OUTPUT
+
+      # 7. 编译Go程序（针对特定架构）
+      - name: Build Go binary for target arch
+        run: |
+          echo "编译 ${{ matrix.variant }} 版本，架构 ${{ matrix.arch }}"
+          
+          # 确定要编译的源文件
+          if [ "${{ matrix.variant }}" = "basic" ]; then
+            SOURCE_FILE="${{ steps.source_files.outputs.MAIN_GO }}"
+          else
+            SOURCE_FILE="${{ steps.source_files.outputs.EZ_GO }}"
+          fi
+          
+          # 检查源文件是否存在
+          if [ ! -f "$SOURCE_FILE" ]; then
+            echo "警告: $SOURCE_FILE 不存在，跳过编译"
+            exit 0
+          fi
+          
+          # 针对Android目标编译
+          GOOS=android GOARCH=${{ steps.arch_env.outputs.GOARCH }} CGO_ENABLED=0 \
+            go build -ldflags="-s -w" -o ${{ steps.arch_env.outputs.BINARY_NAME }} "$SOURCE_FILE"
+          
+          echo "编译完成: $(file ${{ steps.arch_env.outputs.BINARY_NAME }} || true)"
+
+      # 8. 更新module.prop以包含架构信息
+      - name: Update module.prop with arch info
+        run: |
+          cp module.prop module.prop.backup
+          # 添加架构信息到模块属性
+          echo "architecture=${{ matrix.arch }}" >> module.prop
+          echo "versionCode=$(( $(date +%s) + ${{ strategy.job-index }} ))" >> module.prop
+          echo "updateJson=https://github.com/${{ github.repository }}/releases/latest/download/update-${{ matrix.arch }}.json" >> module.prop
+          
+          echo "更新后的module.prop:"
+          cat module.prop
+
+      # 9. 准备模块文件
       - name: Prepare module files
         run: |
-          echo "准备模块目录..."
+          mkdir -p module-${{ matrix.variant }}-${{ matrix.arch }}
           
-          # 检查必要的模块文件
-          REQUIRED_FILES=("module.prop" "customize.sh" "service.sh")
-          for file in "${REQUIRED_FILES[@]}"; do
-            if [ ! -f "$file" ]; then
-              echo "警告: $file 不存在"
-            else
-              echo "找到: $file"
-            fi
-          done
+          # 复制通用文件
+          cp -r META-INF/ module-${{ matrix.variant }}-${{ matrix.arch }}/ 2>/dev/null || echo "META-INF目录不存在，继续..."
+          cp module.prop module-${{ matrix.variant }}-${{ matrix.arch }}/
+          cp customize.sh module-${{ matrix.variant }}-${{ matrix.arch }}/ 2>/dev/null || true
+          cp service.sh module-${{ matrix.variant }}-${{ matrix.arch }}/ 2>/dev/null || true
+          cp *.conf module-${{ matrix.variant }}-${{ matrix.arch }}/ 2>/dev/null || true
+          cp reload.sh module-${{ matrix.variant }}-${{ matrix.arch }}/ 2>/dev/null || true
+          # 复制对应的二进制文件并重命名
+          cp ${{ steps.arch_env.outputs.BINARY_NAME }} module-${{ matrix.variant }}-${{ matrix.arch }}/EZ
+          chmod +x module-${{ matrix.variant }}-${{ matrix.arch }}/EZ
           
-          # 创建基础版模块目录
-          mkdir -p module-basic
-          # 复制模块必需文件到基础版目录
-          cp -r META-INF/ module-basic/ 2>/dev/null || echo "META-INF目录不存在，继续..."
-          cp module.prop module-basic/ 2>/dev/null || true
-          cp customize.sh module-basic/ 2>/dev/null || true
-          cp service.sh module-basic/ 2>/dev/null || true
-          cp reload.sh module-basic/ 2>/dev/null || true
-          cp blacklist.conf module-basic/ 2>/dev/null || true
-          cp whitelist.conf module-basic/ 2>/dev/null || true
-          cp MT.conf module-basic/ 2>/dev/null || true
-          cp config.conf module-basic/ 2>/dev/null || true
-          # 复制基础版二进制程序
-          cp EZ-basic module-basic/EZ
-          chmod +x module-basic/EZ
-          
-          # 创建完整版模块目录
-          mkdir -p module-full
-          # 复制模块必需文件到完整版目录
-          cp -r META-INF/ module-full/ 2>/dev/null || echo "META-INF目录不存在，继续..."
-          cp module.prop module-full/ 2>/dev/null || true
-          cp customize.sh module-full/ 2>/dev/null || true
-          cp service.sh module-full/ 2>/dev/null || true
-          cp reload.sh module-full/ 2>/dev/null || true
-          cp blacklist.conf module-full/ 2>/dev/null || true
-          cp whitelist.conf module-full/ 2>/dev/null || true
-          cp MT.conf module-full/ 2>/dev/null || true
-          cp config.conf module-full/ 2>/dev/null || true
-          # 复制完整版二进制程序
-          cp EZ-full module-full/EZ
-          chmod +x module-full/EZ
-          
-          echo "模块目录准备完成:"
-          ls -la module-basic/ module-full/
+          echo "模块文件准备完成:"
+          ls -la module-${{ matrix.variant }}-${{ matrix.arch }}/
 
-      # 5. 打包模块
-      - name: Package modules
+      # 10. 打包模块
+      - name: Package module
         run: |
-          echo "创建模块zip包..."
-          
-          # 打包基础版模块
-          cd module-basic
-          zip -r ../EZ-Clean-Basic.zip .
+          cd module-${{ matrix.variant }}-${{ matrix.arch }}
+          zip -r ../${{ steps.arch_env.outputs.ZIP_NAME }} .
           cd ..
           
-          # 打包完整版模块
-          cd module-full
-          zip -r ../EZ-Clean-Full.zip .
-          cd ..
-          
-          echo "打包结果:"
+          echo "打包完成: ${{ steps.arch_env.outputs.ZIP_NAME }}"
           ls -l *.zip
 
-      # 6. 清理编译产物和临时目录
-      - name: Clean build artifacts
+      # 11. 生成架构特定的update.json
+      - name: Generate arch-specific update.json
         run: |
-          echo "清理编译产物..."
-          rm -f EZ-basic EZ-full
-          rm -rf module-basic module-full
-          echo "剩余文件:"
-          ls -la *.zip
-
-      # 7. 生成发布说明
-      - name: Generate Release notes
-        run: |
-          echo "## EZ-Clean 发布说明
-          - **触发类型**: ${{ github.event_name == 'push' && '主分支自动触发' || '手动触发' }}
-          - **发布时间**: $(date +'%Y-%m-%d %H:%M:%S')
-          - **标签**: module (每次发布覆盖)
-          - **模块版本**:
-            - 基础版: 从 main.go 编译 (核心功能)
-            - 完整版: 从 ez.go 编译 (扩展功能)
-          - **兼容性**: 兼容 Magisk 和 KernelSU
-          - **SHA256 校验和**:
-            - EZ-Clean-Basic.zip: $(sha256sum EZ-Clean-Basic.zip | awk '{print $1}')
-            - EZ-Clean-Full.zip: $(sha256sum EZ-Clean-Full.zip | awk '{print $1}')" > RELEASE_NOTES.md
+          TIMESTAMP=$(date +%s)
+          cat > update-${{ matrix.arch }}.json << EOF
+          {
+            "version": "v$(date +%Y.%m.%d)",
+            "versionCode": $TIMESTAMP,
+            "zipUrl": "https://github.com/${{ github.repository }}/releases/latest/download/${{ steps.arch_env.outputs.ZIP_NAME }}",
+            "changelog": "https://github.com/${{ github.repository }}/releases/tag/${GITHUB_REF_NAME:-latest}",
+            "architecture": "${{ matrix.arch }}"
+          }
+          EOF
           
-          echo "发布说明:"
-          cat RELEASE_NOTES.md
+          echo "生成的update-${{ matrix.arch }}.json:"
+          cat update-${{ matrix.arch }}.json
 
-      # 8. 验证发布文件
-      - name: Verify release files
+      # 12. 恢复原始module.prop
+      - name: Restore original module.prop
         run: |
-          echo "检查必要文件:"
-          [ -f "EZ-Clean-Basic.zip" ] && echo "✓ EZ-Clean-Basic.zip 存在" || (echo "✗ EZ-Clean-Basic.zip 缺失" && exit 1)
-          [ -f "EZ-Clean-Full.zip" ] && echo "✓ EZ-Clean-Full.zip 存在" || (echo "✗ EZ-Clean-Full.zip 缺失" && exit 1)
-          [ -f "RELEASE_NOTES.md" ] && echo "✓ RELEASE_NOTES.md 存在" || (echo "✗ RELEASE_NOTES.md 缺失" && exit 1)
-          echo "所有文件验证成功"
+          mv module.prop.backup module.prop
 
-      # 9. 删除旧发布 - 使用PAT替代GITHUB_TOKEN
-      - name: Delete old releases
-        uses: sgpublic/delete-release-action@v1.1
+      # 13. 上传构建产物
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
         with:
-          repo: ${{ github.repository }}
-          release-drop: true
-          release-keep-count: 2
-          release-drop-tag: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: ${{ matrix.variant }}-${{ matrix.arch }}
+          path: |
+            ${{ steps.arch_env.outputs.ZIP_NAME }}
+            update-${{ matrix.arch }}.json
+          retention-days: 7
 
-      # 10. 重建标签 - 添加错误处理
-      - name: Recreate module tag
+  # 创建统一发布
+  create-release:
+    runs-on: ubuntu-latest
+    needs: build-multi-arch
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    permissions:
+      contents: write
+      actions: write
+      
+    steps:
+      # 1. 下载所有构建产物
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: '*'
+          merge-multiple: true
+
+      # 2. 生成统一的发布说明
+      - name: Generate unified release notes
         run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          FIXED_TAG="module"
+          cat > RELEASE_NOTES.md << EOF
+          # EZ-Clean 多架构版本发布
           
-          # 删除本地和远程标签
-          git tag -d $FIXED_TAG 2>/dev/null || echo "本地标签不存在"
-          git push origin --delete $FIXED_TAG 2>/dev/null || echo "远程标签不存在或无法删除"
+          **构建信息**
+          - 发布时间: $(date +'%Y-%m-%d %H:%M:%S')
+          - 提交: \`${{ github.sha }}\`
+          - 触发方式: ${{ github.event_name }}
           
-          # 创建新标签
-          git tag -a $FIXED_TAG -m "EZ-Clean Release $(date +'%Y-%m-%d %H:%M:%S')"
-          git push origin $FIXED_TAG
-          echo "标签 $FIXED_TAG 重建完成"
+          ## 支持的CPU架构
+          
+          Android设备使用多种CPU架构，本发布为每种架构提供了优化版本[citation:3]：
+          
+          | 架构 | 支持设备 | 推荐选择 |
+          |------|----------|----------|
+          | **arm64-v8a** | 现代64位ARM设备 (2015年后大部分设备) | ✅ 优先选择 |
+          | **armeabi-v7a** | 旧款32位ARM设备 | 老旧设备备用 |
+          | **x86_64** | 64位Intel/AMD设备 (模拟器、平板) | 特定设备 |
+          | **x86** | 32位Intel设备 | 特定设备 |
+          
+          ## 版本说明
+          
+          - **基础版**: 核心清理功能，体积更小
+          - **完整版**: 扩展功能集，功能全面
+          
+          ## 自动更新支持
+          
+          所有版本均已配置自动更新，安装后可在Magisk/KernelSU中直接检查更新。
+          
+          ## 文件校验
+          $(echo -e "\n")
+          $(for file in artifacts/*.zip; do
+            if [ -f "$file" ]; then
+              echo "  - **$(basename $file)**: \`$(sha256sum $file | awk '{print $1}')\`"
+            fi
+          done)
+          
+          ## 使用指南
+          
+          1. **确定设备架构**: 使用CPU-Z等应用查看设备架构
+          2. **选择对应版本**: 下载与设备架构匹配的版本
+          3. **刷入模块**: 在Magisk/KernelSU中安装模块
+          4. **重启设备**: 启用模块功能
+          5. **享受自动更新**: 后续可通过应用内更新直接升级
+          
+          **注意**: 安装不匹配架构的版本可能导致模块无法正常工作！
+          
+          EOF
+          
+          echo "发布说明生成完成"
 
-      # 11. 创建发布
-      - name: Create Release
+      # 3. 创建GitHub Release
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: "module"
-          name: "EZ-Clean 双版本"
+          tag_name: "multi-arch-$(date +%Y%m%d-%H%M%S)"
+          name: "EZ-Clean 多架构版本 $(date +'%Y.%m.%d')"
           body_path: RELEASE_NOTES.md
           draft: false
           prerelease: false
           files: |
-            EZ-Clean-Basic.zip
-            EZ-Clean-Full.zip
+            artifacts/*.zip
+            artifacts/*.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # 优化工作流清理配置
+  # 工作流清理
   workflow-cleanup:
     runs-on: ubuntu-latest
-    needs: build-and-release
+    needs: create-release
+    if: always() && needs.create-release.result != 'skipped'
+    
     permissions:
       actions: write
-    # 仅在build-and-release成功时运行
-    if: needs.build-and-release.result == 'success'
+      
     steps:
       - name: Clean old workflow runs
-        uses: matt-rakes/delete-workflow-runs@v2
+        uses: Mattraks/delete-workflow-runs@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           repository: ${{ github.repository }}
           retain_days: 0
           retain_runs: 1
-          delete_workflow_by_state_pattern: 'completed'
-          delete_run_by_conclusion_pattern: 'success'
-          dry_run: false
+          keep_minimum_runs: 0
