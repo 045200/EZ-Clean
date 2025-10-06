@@ -249,22 +249,7 @@ func getAndroidVersion() (int, error) {
 			return version, nil
 		}
 	}
-
-	// 方法2: 通过系统文件
-	if content, err := os.ReadFile("/system/build.prop"); err == nil {
-		lines := strings.Split(string(content), "\n")
-		for _, line := range lines {
-			if strings.HasPrefix(line, "ro.build.version.sdk=") {
-				parts := strings.Split(line, "=")
-				if len(parts) == 2 {
-					if version, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil {
-						return version, nil
-					}
-				}
-			}
-		}
-	}
-
+	
 	return 0, fmt.Errorf("无法检测Android版本")
 }
 
