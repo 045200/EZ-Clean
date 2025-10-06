@@ -7,7 +7,6 @@ on:
     branches: [ "main" ]
   workflow_dispatch:
 
-# 并发控制确保工作流稳定性
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: false
@@ -17,12 +16,10 @@ env:
   MODULE_NAME: 'EZ-Clean'
 
 jobs:
-  # 多架构构建矩阵
   build-multi-arch:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # 定义架构矩阵，映射到Go架构和Android ABI
         include:
           - goarch: arm64
             android_abi: arm64-v8a
@@ -37,7 +34,6 @@ jobs:
             android_abi: x86
             toolchain_triple: i686-linux-android21
         variant: [basic, full]
-      # 并行构建以提升效率
       fail-fast: false
       max-parallel: 8
     
@@ -46,13 +42,11 @@ jobs:
       contents: write
       
     steps:
-      # 1. 代码检出
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
-      # 2. 设置Go环境与缓存
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -62,12 +56,10 @@ jobs:
             go.sum
             **/go.sum
 
-      # 3. 安装Android NDK和工具链
-      - name: Setup Android NDK and toolchain
+      - name: Install Android NDK and build dependencies
         run: |
-          # 安装Android NDK
           sudo apt-get update
-          sudo apt-get install -y wget unzip
+          sudo apt-get install -y wget unzip zip file jq build-essential
           
           # 下载并安装Android NDK
           wget -q https://dl.google.com/android/repository/android-ndk-r25b-linux.zip
@@ -75,16 +67,8 @@ jobs:
           export ANDROID_NDK_HOME=$(pwd)/android-ndk-r25b
           echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME" >> $GITHUB_ENV
           
-          # 验证NDK安装
-          echo "NDK安装完成，路径: $ANDROID_NDK_HOME"
-          ls -la $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/*-clang | head -5
+          echo "NDK安装完成"
 
-      # 4. 依赖安装
-      - name: Install dependencies
-        run: |
-          sudo apt-get install -y jq zip file
-
-      # 5. 初始化Go模块（如需要）
       - name: Initialize Go module if needed
         run: |
           if [ ! -f "go.mod" ]; then
@@ -93,7 +77,6 @@ jobs:
           fi
           go mod tidy
 
-      # 6. 动态确定源文件路径
       - name: Locate source files
         id: source_files
         run: |
@@ -108,7 +91,6 @@ jobs:
             exit 1
           fi
 
-      # 7. 配置构建参数
       - name: Setup build parameters
         id: build_params
         run: |
@@ -116,21 +98,7 @@ jobs:
           echo "ZIP_NAME=EZ-Clean-${{ matrix.variant }}-${{ matrix.android_abi }}.zip" >> $GITHUB_OUTPUT
           echo "MODULE_DIR=module-${{ matrix.variant }}-${{ matrix.android_abi }}" >> $GITHUB_OUTPUT
 
-      # 8. 验证编译器路径
-      - name: Verify compiler path
-        run: |
-          COMPILER_PATH="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.toolchain_triple }}-clang"
-          echo "检查编译器路径: $COMPILER_PATH"
-          if [ -f "$COMPILER_PATH" ]; then
-            echo "✅ 编译器存在: $(ls -la "$COMPILER_PATH")"
-          else
-            echo "❌ 编译器不存在，可用的编译器:"
-            ls "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/" | grep clang | head -10
-            exit 1
-          fi
-
-      # 9. 编译Go程序（优先尝试静态编译）
-      - name: Build Go binary for target arch
+      - name: Build Go binary with proper CGO configuration
         run: |
           echo "编译 ${{ matrix.variant }} 版本，架构 ${{ matrix.android_abi }} (GOARCH=${{ matrix.goarch }})"
           
@@ -141,56 +109,86 @@ jobs:
             SOURCE_FILE="${{ steps.source_files.outputs.EZ_GO }}"
           fi
           
-          # 检查源文件是否存在
           if [ ! -f "$SOURCE_FILE" ]; then
             echo "警告: $SOURCE_FILE 不存在，跳过编译"
             exit 0
           fi
           
-          # 方法1: 首先尝试完全静态编译（禁用CGO）
-          echo "尝试方法1: 静态编译（禁用CGO）..."
+          # 设置Android交叉编译环境
           export GOOS=android
           export GOARCH=${{ matrix.goarch }}
-          export CGO_ENABLED=0
+          export CGO_ENABLED=1
           
-          go build -tags netgo -ldflags="-s -w -extldflags=-static" -o ${{ steps.build_params.outputs.BINARY_NAME }} "$SOURCE_FILE"
+          # 设置NDK工具链路径
+          export CC="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.toolchain_triple }}-clang"
+          export CXX="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.toolchain_triple }}-clang++"
           
-          if [ -f "${{ steps.build_params.outputs.BINARY_NAME }}" ]; then
-            echo "✅ 方法1成功: 静态编译完成"
-            file ${{ steps.build_params.outputs.BINARY_NAME }}
-          else
-            echo "方法1失败，尝试方法2: 使用CGO编译..."
-            
-            # 方法2: 使用CGO和NDK工具链
-            export CGO_ENABLED=1
-            export CC="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.toolchain_triple }}-clang"
-            
-            echo "使用编译器: $CC"
-            go build -ldflags="-s -w" -o ${{ steps.build_params.outputs.BINARY_NAME }} "$SOURCE_FILE"
-            
-            if [ -f "${{ steps.build_params.outputs.BINARY_NAME }}" ]; then
-              echo "✅ 方法2成功: CGO编译完成"
-              file ${{ steps.build_params.outputs.BINARY_NAME }}
-            else
-              echo "❌ 所有编译方法都失败"
+          # 设置sysroot和其他必要的环境变量
+          export ANDROID_SYSROOT="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+          
+          echo "使用编译器: $CC"
+          echo "Sysroot: $ANDROID_SYSROOT"
+          
+          # 验证编译器
+          if ! $CC --version > /dev/null 2>&1; then
+            echo "❌ 编译器无法执行: $CC"
+            echo "尝试修复编译器权限..."
+            chmod +x "$CC" || true
+            if ! $CC --version > /dev/null 2>&1; then
+              echo "❌ 编译器仍然无法执行"
               exit 1
             fi
           fi
+          
+          echo "✅ 编译器验证通过"
+          
+          # 方法1: 使用CGO和正确的链接标志
+          echo "使用方法1: CGO编译..."
+          CGO_CFLAGS="--sysroot=$ANDROID_SYSROOT" \
+          CGO_LDFLAGS="--sysroot=$ANDROID_SYSROOT" \
+          go build -ldflags="-s -w -linkmode=external -extldflags=-static" -o ${{ steps.build_params.outputs.BINARY_NAME }} "$SOURCE_FILE"
+          
+          if [ -f "${{ steps.build_params.outputs.BINARY_NAME }}" ]; then
+            echo "✅ 方法1成功: CGO编译完成"
+            file ${{ steps.build_params.outputs.BINARY_NAME }}
+          else
+            echo "方法1失败，尝试方法2: 简化CGO编译..."
+            
+            # 方法2: 简化编译参数
+            go build -ldflags="-s -w" -o ${{ steps.build_params.outputs.BINARY_NAME }} "$SOURCE_FILE"
+            
+            if [ -f "${{ steps.build_params.outputs.BINARY_NAME }}" ]; then
+              echo "✅ 方法2成功: 简化CGO编译完成"
+              file ${{ steps.build_params.outputs.BINARY_NAME }}
+            else
+              echo "方法2失败，尝试方法3: 使用gomobile方法..."
+              
+              # 方法3: 使用类似gomobile的方法
+              export CGO_CFLAGS="-I$ANDROID_NDK_HOME/sysroot/usr/include"
+              export CGO_LDFLAGS="-L$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/${{ matrix.toolchain_triple }}"
+              
+              go build -ldflags="-s -w" -o ${{ steps.build_params.outputs.BINARY_NAME }} "$SOURCE_FILE"
+              
+              if [ -f "${{ steps.build_params.outputs.BINARY_NAME }}" ]; then
+                echo "✅ 方法3成功: gomobile风格编译完成"
+                file ${{ steps.build_params.outputs.BINARY_NAME }}
+              else
+                echo "❌ 所有编译方法都失败"
+                exit 1
+              fi
+            fi
+          fi
 
-      # 10. 更新module.prop以包含架构信息
       - name: Update module.prop with arch info
         run: |
           if [ -f "module.prop" ]; then
             cp module.prop module.prop.backup
-            # 添加架构信息到模块属性
             echo "architecture=${{ matrix.android_abi }}" >> module.prop
             echo "versionCode=$(( $(date +%s) / 100 ))" >> module.prop
             echo "updateJson=https://github.com/${{ github.repository }}/releases/latest/download/update-${{ matrix.android_abi }}.json" >> module.prop
-            
             echo "更新后的module.prop:"
             cat module.prop
           else
-            echo "警告: module.prop 不存在，创建新的"
             cat > module.prop << EOF
             id=EZ-Clean
             name=EZ Clean
@@ -203,37 +201,31 @@ jobs:
             EOF
           fi
 
-      # 11. 准备模块文件（保持二进制文件名为EZ）
       - name: Prepare module files
         run: |
           mkdir -p ${{ steps.build_params.outputs.MODULE_DIR }}
           
           # 复制通用文件
-          cp -r META-INF/ ${{ steps.build_params.outputs.MODULE_DIR }}/ 2>/dev/null || echo "META-INF目录不存在，继续..."
-          cp module.prop ${{ steps.build_params.outputs.MODULE_DIR }}/
-          cp customize.sh ${{ steps.build_params.outputs.MODULE_DIR }}/ 2>/dev/null || true
-          cp service.sh ${{ steps.build_params.outputs.MODULE_DIR }}/ 2>/dev/null || true
-          cp *.conf ${{ steps.build_params.outputs.MODULE_DIR }}/ 2>/dev/null || true
-          cp reload.sh ${{ steps.build_params.outputs.MODULE_DIR }}/ 2>/dev/null || true
+          [ -d "META-INF" ] && cp -r META-INF/ ${{ steps.build_params.outputs.MODULE_DIR }}/
+          [ -f "module.prop" ] && cp module.prop ${{ steps.build_params.outputs.MODULE_DIR }}/
+          [ -f "customize.sh" ] && cp customize.sh ${{ steps.build_params.outputs.MODULE_DIR }}/
+          [ -f "service.sh" ] && cp service.sh ${{ steps.build_params.outputs.MODULE_DIR }}/
+          [ -f "*.conf" ] && cp *.conf ${{ steps.build_params.outputs.MODULE_DIR }}/ 2>/dev/null || true
+          [ -f "reload.sh" ] && cp reload.sh ${{ steps.build_params.outputs.MODULE_DIR }}/
           
-          # 复制对应的二进制文件并重命名为EZ（保持与现有脚本兼容）
+          # 复制二进制文件并重命名为EZ
           cp ${{ steps.build_params.outputs.BINARY_NAME }} ${{ steps.build_params.outputs.MODULE_DIR }}/EZ
           chmod +x ${{ steps.build_params.outputs.MODULE_DIR }}/EZ
           
-          echo "模块文件准备完成:"
-          ls -la ${{ steps.build_params.outputs.MODULE_DIR }}/
+          echo "模块文件准备完成"
 
-      # 12. 打包模块
       - name: Package module
         run: |
           cd ${{ steps.build_params.outputs.MODULE_DIR }}
           zip -r ../${{ steps.build_params.outputs.ZIP_NAME }} .
           cd ..
-          
           echo "打包完成: ${{ steps.build_params.outputs.ZIP_NAME }}"
-          ls -l *.zip
 
-      # 13. 生成架构特定的update.json
       - name: Generate arch-specific update.json
         run: |
           TIMESTAMP=$(date +%s)
@@ -246,19 +238,11 @@ jobs:
             "architecture": "${{ matrix.android_abi }}"
           }
           EOF
-          
-          echo "生成的update-${{ matrix.android_abi }}.json:"
-          cat update-${{ matrix.android_abi }}.json
 
-      # 14. 恢复原始module.prop
       - name: Restore original module.prop
         run: |
-          if [ -f "module.prop.backup" ]; then
-            mv module.prop.backup module.prop
-            echo "module.prop 已恢复"
-          fi
+          [ -f "module.prop.backup" ] && mv module.prop.backup module.prop
 
-      # 15. 上传构建产物
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -268,18 +252,14 @@ jobs:
             update-${{ matrix.android_abi }}.json
           retention-days: 7
 
-  # 创建统一发布
   create-release:
     runs-on: ubuntu-latest
     needs: build-multi-arch
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    
     permissions:
       contents: write
       actions: write
-      
     steps:
-      # 1. 下载所有构建产物
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -287,7 +267,6 @@ jobs:
           pattern: '*'
           merge-multiple: true
 
-      # 2. 生成统一的发布说明
       - name: Generate unified release notes
         run: |
           cat > RELEASE_NOTES.md << EOF
@@ -299,24 +278,16 @@ jobs:
           - 触发方式: ${{ github.event_name }}
           
           ## 支持的CPU架构
-          
-          Android设备使用多种CPU架构，本发布为每种架构提供了优化版本：
-          
           | 架构 | 支持设备 | 推荐选择 |
           |------|----------|----------|
-          | **arm64-v8a** | 现代64位ARM设备 (2015年后大部分设备) | ✅ 优先选择 |
+          | **arm64-v8a** | 现代64位ARM设备 | ✅ 优先选择 |
           | **armeabi-v7a** | 旧款32位ARM设备 | 老旧设备备用 |
-          | **x86_64** | 64位Intel/AMD设备 (模拟器、平板) | 特定设备 |
+          | **x86_64** | 64位Intel/AMD设备 | 特定设备 |
           | **x86** | 32位Intel设备 | 特定设备 |
           
           ## 版本说明
-          
           - **基础版**: 核心清理功能，体积更小
           - **完整版**: 扩展功能集，功能全面
-          
-          ## 自动更新支持
-          
-          所有版本均已配置自动更新，安装后可在Magisk/KernelSU中直接检查更新。
           
           ## 文件列表
           $(echo -e "\n")
@@ -326,22 +297,8 @@ jobs:
               echo "  - **\$(basename \$file)** (\$SIZE)"
             fi
           done)
-          
-          ## 使用指南
-          
-          1. **确定设备架构**: 使用CPU-Z等应用查看设备架构
-          2. **选择对应版本**: 下载与设备架构匹配的版本
-          3. **刷入模块**: 在Magisk/KernelSU中安装模块
-          4. **重启设备**: 启用模块功能
-          5. **享受自动更新**: 后续可通过应用内更新直接升级
-          
-          **注意**: 安装不匹配架构的版本可能导致模块无法正常工作！
-          
           EOF
-          
-          echo "发布说明生成完成"
 
-      # 3. 创建GitHub Release
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -356,15 +313,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # 工作流清理
   workflow-cleanup:
     runs-on: ubuntu-latest
     needs: create-release
     if: always() && needs.create-release.result != 'skipped'
-    
     permissions:
       actions: write
-      
     steps:
       - name: Clean old workflow runs
         uses: Mattraks/delete-workflow-runs@v2
