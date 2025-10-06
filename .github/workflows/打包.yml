@@ -147,16 +147,16 @@ jobs:
       - name: Generate Release notes
         run: |
           echo "## EZ-Clean 发布说明
-- **触发类型**: ${{ github.event_name == 'push' && '主分支自动触发' || '手动触发' }}
-- **发布时间**: $(date +'%Y-%m-%d %H:%M:%S')
-- **标签**: module (每次发布覆盖)
-- **模块版本**:
-  - 基础版: 从 main.go 编译 (核心功能)
-  - 完整版: 从 ez.go 编译 (扩展功能)
-- **兼容性**: 兼容 Magisk 和 KernelSU
-- **SHA256 校验和**:
-  - EZ-Clean-Basic.zip: $(sha256sum EZ-Clean-Basic.zip | awk '{print $1}')
-  - EZ-Clean-Full.zip: $(sha256sum EZ-Clean-Full.zip | awk '{print $1}')" > RELEASE_NOTES.md
+          - **触发类型**: ${{ github.event_name == 'push' && '主分支自动触发' || '手动触发' }}
+          - **发布时间**: $(date +'%Y-%m-%d %H:%M:%S')
+          - **标签**: module (每次发布覆盖)
+          - **模块版本**:
+            - 基础版: 从 main.go 编译 (核心功能)
+            - 完整版: 从 ez.go 编译 (扩展功能)
+          - **兼容性**: 兼容 Magisk 和 KernelSU
+          - **SHA256 校验和**:
+            - EZ-Clean-Basic.zip: $(sha256sum EZ-Clean-Basic.zip | awk '{print $1}')
+            - EZ-Clean-Full.zip: $(sha256sum EZ-Clean-Full.zip | awk '{print $1}')" > RELEASE_NOTES.md
           
           echo "发布说明:"
           cat RELEASE_NOTES.md
