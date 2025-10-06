@@ -71,15 +71,9 @@ jobs:
       - name: Locate source files
         id: source_files
         run: |
-<<<<<<< HEAD
-          if [ -f "源码/main.go" ]; then
-            echo "MAIN_GO=源码/main.go" >> $GITHUB_OUTPUT
-            echo "EZ_GO=源码/ez.go" >> $GITHUB_OUTPUT
-=======
           if [ -f "source/main.go" ]; then
             echo "MAIN_GO=source/main.go" >> $GITHUB_OUTPUT
             echo "EZ_GO=source/ez.go" >> $GITHUB_OUTPUT
->>>>>>> bf80d55 (更新工作流及仓库架构)
           elif [ -f "main.go" ]; then
             echo "MAIN_GO=main.go" >> $GITHUB_OUTPUT
             echo "EZ_GO=ez.go" >> $GITHUB_OUTPUT
