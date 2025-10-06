@@ -55,7 +55,7 @@ jobs:
         echo "$PWD/android-ndk-${{ env.NDK_VERSION }}/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
 
     - name: Build basic version
-      if: github.event.inputs.version_type != 'multi' || github.event.inputs.version_type == 'basic'
+      if: github.event.inputs.version_type != 'multi'
       run: |
         export GOOS=android
         export GOARCH=${{ matrix.goarch }}
@@ -92,7 +92,7 @@ EOF
 EOF
 
     - name: Build multi version
-      if: github.event.inputs.version_type != 'basic' || github.event.inputs.version_type == 'multi'
+      if: github.event.inputs.version_type != 'basic'
       run: |
         export GOOS=android
         export GOARCH=${{ matrix.goarch }}
@@ -138,7 +138,7 @@ umask 022
 ui_print() { echo "$1"; }
 require_new_magisk() {
   ui_print "*******************************"
-  ui_print " EZ-Clean Module Installer "
+  ui_print "EZ-Clean Module Installer "
   ui_print "*******************************"
 }
 require_new_magisk
@@ -168,7 +168,7 @@ EOF
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: ez-clean-modules-${{ matrix.arch }}
+        name: EZ-Clean-modules-${{ matrix.arch }}
         path: build/*.zip
         retention-days: 1
 
