@@ -88,6 +88,7 @@ jobs:
             echo "EZ_GO=ez.go" >> $GITHUB_OUTPUT
           else
             echo "错误: 未找到Go源文件"
+            find . -name "*.go" | head -10
             exit 1
           fi
 
@@ -98,16 +99,25 @@ jobs:
           echo "ZIP_NAME=EZ-Clean-${{ matrix.variant }}-${{ matrix.android_abi }}.zip" >> $GITHUB_OUTPUT
           echo "MODULE_DIR=module-${{ matrix.variant }}-${{ matrix.android_abi }}" >> $GITHUB_OUTPUT
 
+      - name: Verify NDK Installation
+        run: |
+          echo "NDK Path: ${{ steps.setup-ndk.outputs.NDK_PATH }}"
+          echo "NDK Contents:"
+          ls -la "${{ steps.setup-ndk.outputs.NDK_PATH }}" || echo "NDK directory not accessible"
+
       - name: Verify NDK compiler exists
         run: |
           COMPILER_PATH="${{ steps.setup-ndk.outputs.NDK_PATH }}/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.toolchain_triple }}-clang"
           echo "Checking compiler at: $COMPILER_PATH"
+          
           if [ -f "$COMPILER_PATH" ]; then
             echo "✅ Compiler exists: $(ls -la "$COMPILER_PATH")"
+            echo "Compiler version:"
+            "$COMPILER_PATH" --version || echo "Compiler version check failed but file exists"
           else
             echo "❌ Compiler not found at expected path"
             echo "Available compilers in directory:"
-            ls "${{ steps.setup-ndk.outputs.NDK_PATH }}/toolchains/llvm/prebuilt/linux-x86_64/bin/" | grep -E "(clang$|android)" | head -10
+            find "${{ steps.setup-ndk.outputs.NDK_PATH }}/toolchains/llvm/prebuilt/linux-x86_64/bin/" -name "*clang*" 2>/dev/null | head -20 || echo "Could not list compilers"
             exit 1
           fi
 
@@ -127,6 +137,10 @@ jobs:
           echo "Building ${{ matrix.variant }} for ${{ matrix.android_abi }} (GOARCH=${{ matrix.goarch }})"
           echo "Using compiler: $CC"
           echo "Source file: $SOURCE_FILE"
+          
+          # 设置构建缓存路径
+          export GOCACHE="$HOME/.cache/go-build"
+          mkdir -p "$GOCACHE"
           
           # Build with CGO [citation:1]
           go build -ldflags="-s -w" -o "${{ steps.build_params.outputs.BINARY_NAME }}" "$SOURCE_FILE"
@@ -218,9 +232,46 @@ jobs:
             update-${{ matrix.android_abi }}.json
           retention-days: 7
 
-  create-release:
+  # 新增：构建结果汇总
+  build-summary:
+    name: Build Summary
     runs-on: ubuntu-latest
     needs: build-multi-arch
+    if: always()
+    
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: '*'
+          merge-multiple: true
+          
+      - name: Show build summary
+        run: |
+          echo "=== Build Summary ==="
+          echo "Build completed for the following configurations:"
+          find artifacts -type f -name "*.zip" 2>/dev/null | while read file; do
+            if [ -f "$file" ]; then
+              echo "✅ $(basename "$file")"
+            fi
+          done || echo "No artifacts found"
+          echo "====================="
+          
+          TOTAL_EXPECTED=8
+          TOTAL_BUILT=$(find artifacts -type f -name "*.zip" 2>/dev/null | wc -l)
+          echo "Total built: $TOTAL_BUILT/$TOTAL_EXPECTED"
+          
+          if [ $TOTAL_BUILT -eq $TOTAL_EXPECTED ]; then
+            echo "🎉 All architectures built successfully!"
+          else
+            echo "⚠️  Some architectures failed to build"
+            exit 1
+          fi
+
+  create-release:
+    runs-on: ubuntu-latest
+    needs: [build-multi-arch, build-summary]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: write
