@@ -71,9 +71,15 @@ jobs:
       - name: Locate source files
         id: source_files
         run: |
+<<<<<<< HEAD
           if [ -f "源码/main.go" ]; then
             echo "MAIN_GO=源码/main.go" >> $GITHUB_OUTPUT
             echo "EZ_GO=源码/ez.go" >> $GITHUB_OUTPUT
+=======
+          if [ -f "source/main.go" ]; then
+            echo "MAIN_GO=source/main.go" >> $GITHUB_OUTPUT
+            echo "EZ_GO=source/ez.go" >> $GITHUB_OUTPUT
+>>>>>>> bf80d55 (更新工作流及仓库架构)
           elif [ -f "main.go" ]; then
             echo "MAIN_GO=main.go" >> $GITHUB_OUTPUT
             echo "EZ_GO=ez.go" >> $GITHUB_OUTPUT
@@ -153,8 +159,14 @@ jobs:
           cp module.prop module-${{ matrix.variant }}-${{ matrix.arch }}/
           cp customize.sh module-${{ matrix.variant }}-${{ matrix.arch }}/ 2>/dev/null || true
           cp service.sh module-${{ matrix.variant }}-${{ matrix.arch }}/ 2>/dev/null || true
+<<<<<<< HEAD
           cp *.conf module-${{ matrix.variant }}-${{ matrix.arch }}/ 2>/dev/null || true
           cp reload.sh module-${{ matrix.variant }}-${{ matrix.arch }}/ 2>/dev/null || true
+=======
+          cp reload.sh module-${{ matrix.variant }}-${{ matrix.arch }}/ 2>/dev/null || true
+          cp *.conf module-${{ matrix.variant }}-${{ matrix.arch }}/ 2>/dev/null || true
+          
+>>>>>>> bf80d55 (更新工作流及仓库架构)
           # 复制对应的二进制文件并重命名
           cp ${{ steps.arch_env.outputs.BINARY_NAME }} module-${{ matrix.variant }}-${{ matrix.arch }}/EZ
           chmod +x module-${{ matrix.variant }}-${{ matrix.arch }}/EZ
