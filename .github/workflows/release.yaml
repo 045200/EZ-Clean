@@ -60,7 +60,6 @@ jobs:
 
       - name: 安装构建依赖
         run: |
-          # 确保脚本在任何命令失败时立即退出
           set -e
           sudo apt-get update
           sudo apt-get install -y zip file
@@ -70,7 +69,6 @@ jobs:
           set -e
           # 如果 go.mod 不存在，则初始化
           if [ ! -f "go.mod" ]; then
-            # 使用正确的仓库路径来初始化 go mod
             go mod init github.com/${{ github.repository }}
           fi
           go mod tidy
@@ -97,7 +95,6 @@ jobs:
           echo "MODULE_DIR=module-${{ matrix.variant }}-${{ matrix.android_abi }}" >> "$GITHUB_OUTPUT"
 
       - name: 验证 NDK 交叉编译器是否存在
-        # 简化路径查找，使用 NDK_HOME 环境变量
         run: |
           set -e
           NDK_PATH=${{ steps.setup-ndk.outputs.NDK_PATH }}
@@ -116,12 +113,10 @@ jobs:
           GOOS: android
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 1
-          # 使用步骤输出的 NDK 路径设置 CC 变量
           CC: ${{ steps.setup-ndk.outputs.NDK_PATH }}/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.toolchain_triple }}-clang
         run: |
           set -e
           BINARY_NAME="EZ-${{ matrix.variant }}-${{ matrix.android_abi }}"
-          # 修正变量引用，使用 $() 或双引号
           if [ "${{ matrix.variant }}" = "basic" ]; then
             SOURCE_FILE="${{ steps.source_files.outputs.MAIN_GO }}"
           else
@@ -129,7 +124,6 @@ jobs:
           fi
           
           echo "正在编译源文件: $SOURCE_FILE"
-          # 使用 -trimpath 确保可重现性
           go build -trimpath -ldflags="-s -w" -o "$BINARY_NAME" "$SOURCE_FILE"
           
           echo "✅ 编译成功。二进制文件信息:"
@@ -139,8 +133,6 @@ jobs:
       - name: 更新模块属性文件 (module.prop)
         run: |
           set -e
-          # 修复：确保在写入文件时，使用 `cat > ... << EOF` 的方式不会引入额外的缩进
-          
           # 备份原始文件
           if [ -f "module.prop" ]; then
             cp module.prop module.prop.backup
@@ -149,7 +141,7 @@ jobs:
           VERSION_DATE=$(date +%Y.%m.%d)
           VERSION_CODE=$(( $(date +%s) / 100 ))
           
-          # 注意：这里的 EOF 必须顶格写，否则 shell 会将缩进也写入文件
+          # 注意：EOF 必须顶格写
           cat > module.prop << EOF
 id=${{ env.MODULE_NAME }}
 name=${{ env.MODULE_NAME }}
@@ -168,14 +160,12 @@ EOF
           mkdir -p "$MODULE_DIR"
           
           # 复制通用模块文件（如果存在）
-          # 使用 -L 选项处理符号链接
           [ -d "META-INF" ] && cp -rL META-INF/ "$MODULE_DIR"/
           [ -f "customize.sh" ] && cp customize.sh "$MODULE_DIR"/
           [ -f "service.sh" ] && cp service.sh "$MODULE_DIR"/
           
           # 复制生成的 module.prop 和编译好的二进制文件
           cp module.prop "$MODULE_DIR"/
-          # Magisk 模块通常要求二进制文件名为模块 ID，这里假设模块 ID 为 EZ
           cp "$BINARY_NAME" "$MODULE_DIR"/EZ 
           chmod +x "$MODULE_DIR"/EZ
           
@@ -186,13 +176,12 @@ EOF
         run: |
           set -e
           cd ${{ steps.build_params.outputs.MODULE_DIR }}
-          # 使用相对路径打包，确保 Zip 文件内没有顶层目录
           zip -r ../${{ steps.build_params.outputs.ZIP_NAME }} .
           cd ..
           echo "打包完成: ${{ steps.build_params.outputs.ZIP_NAME }}"
 
       - name: 恢复原始 module.prop
-        if: always() # 无论成功或失败都执行此步骤
+        if: always()
         run: |
           if [ -f "module.prop.backup" ]; then
             mv module.prop.backup module.prop
@@ -210,8 +199,8 @@ EOF
   build-summary:
     name: 构建结果汇总
     runs-on: ubuntu-latest
-    needs: build-multi-arch # 依赖于所有构建任务
-    if: always() # 即使有构建失败也运行，以便提供汇总报告
+    needs: build-multi-arch
+    if: always()
     # 修正：将 output 定义移到 jobs 级别
     outputs:
       build_succeeded: ${{ steps.summary.outputs.build_succeeded }}
@@ -237,10 +226,8 @@ EOF
           echo "总计构建: $TOTAL_BUILT/$TOTAL_EXPECTED"
           
           if [ $TOTAL_BUILT -ne $TOTAL_EXPECTED ]; then
-            # 修复：使用双引号将变量值包装起来，防止特殊字符干扰
             echo "build_succeeded=false" >> "$GITHUB_OUTPUT"
             echo "⚠️ 部分构建失败。已中止发布流程。"
-            # 注意：此处不应使用 exit 1，否则 if: always() 的任务也会被标记为失败，影响后续判断
           else
             echo "build_succeeded=true" >> "$GITHUB_OUTPUT"
             echo "🎉 所有构建均已成功！正在准备发布..."
@@ -249,11 +236,11 @@ EOF
   # 创建 GitHub Release 任务
   create-release:
     runs-on: ubuntu-latest
-    needs: build-summary # 依赖于汇总任务
-    # 修正：条件判断必须使用 `fromJson` 或确保输出是纯布尔/字符串
+    needs: build-summary
+    # 仅当推送到 main 分支且所有构建都成功时才运行
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.build-summary.outputs.build_succeeded == 'true'
     permissions:
-      contents: write # 需要此权限来创建 Release 并上传产物
+      contents: write # 必需权限
       
     steps:
       - name: 下载所有构建产物
@@ -263,7 +250,6 @@ EOF
 
       - name: 准备发布所需的文件 (Release Assets)
         id: release_assets
-        # 修复：这里的 run 块使用了多行 shell 脚本，需要注意 Shell 变量的转义和引号
         run: |
           set -e
           # 将所有 zip 文件从子目录移动到顶层 artifacts 目录
@@ -279,11 +265,10 @@ EOF
           # 为每个架构生成 update.json 文件
           for zip_file in artifacts/*.zip; do
             BASENAME=$(basename "$zip_file" .zip)
-            # 使用更健壮的 sed 命令来提取 ABI
             ABI=$(echo "$BASENAME" | grep -oE '(arm64-v8a|armeabi-v7a|x86_64|x86)$')
             JSON_FILE="artifacts/update-${ABI}.json"
             
-            # 使用 EOF 确保 JSON 格式正确，且变量被正确展开
+            # 使用 EOF 确保 JSON 格式正确
             cat > "$JSON_FILE" << EOF
 {
   "version": "v$(date +%Y.%m.%d)",
@@ -314,7 +299,6 @@ EOF
             echo "#### 基础版 (核心功能)"
             echo "| 架构 | 大小 |"
             echo "| :--- | :--- |"
-            # 遍历并输出基础版信息
             find artifacts -name "EZ-Clean-basic-*.zip" -print0 | sort -z | while IFS= read -r -d '' file; do
                 SIZE=$(du -h "$file" | cut -f1); ARCH=$(basename "$file" .zip | grep -oE '(arm64-v8a|armeabi-v7a|x86_64|x86)$')
                 echo "| \`$ARCH\` | \`$SIZE\` |"
@@ -323,7 +307,6 @@ EOF
             echo "#### 完整版 (扩展功能)"
             echo "| 架构 | 大小 |"
             echo "| :--- | :--- |"
-            # 遍历并输出完整版信息
             find artifacts -name "EZ-Clean-full-*.zip" -print0 | sort -z | while IFS= read -r -d '' file; do
                 SIZE=$(du -h "$file" | cut -f1); ARCH=$(basename "$file" .zip | grep -oE '(arm64-v8a|armeabi-v7a|x86_64|x86)$')
                 echo "| \`$ARCH\` | \`$SIZE\` |"
@@ -336,17 +319,16 @@ EOF
           tag_name: ${{ steps.release_assets.outputs.TAG_NAME }}
           name: ${{ steps.release_assets.outputs.RELEASE_NAME }}
           body_path: artifacts/RELEASE_NOTES.md
-          # 上传 artifacts 目录下所有文件，包括 Zip 和 update.json
-          files: artifacts/*
+          files: artifacts/* # 上传所有 Zip 和 update.json
 
   # 清理旧的工作流运行记录
   workflow-cleanup:
     runs-on: ubuntu-latest
     needs: create-release
-    # 修正：即使 release 失败，也应尝试清理
+    # 即使 release 失败，也应尝试清理
     if: always() && github.ref == 'refs/heads/main'
     permissions:
-      actions: write # 此权限是删除工作流运行记录所必需的
+      actions: write # 必需权限
       
     steps:
       - name: 清理旧的工作流运行记录
