@@ -25,13 +25,23 @@ jobs:
         with:
           go-version: '1.22.x'
 
-      # 编译两个Go文件，分别输出到根目录
-      - name: 编译Go文件（main.go→EZ-普通版，ez.go→EZ-多功能版）
+      # 1. 新增：创建单独文件夹存放编译产物
+      - name: 创建产物存放文件夹（普通版、多功能版）
+        run: |
+          cd $GITHUB_WORKSPACE
+          mkdir -p 普通版  # 创建“普通版”文件夹
+          mkdir -p 多功能版  # 创建“多功能版”文件夹
+          echo "产物文件夹创建完成：普通版/、多功能版/"
+
+      # 2. 调整：编译产物放入对应文件夹，名称统一为“EZ”
+      - name: 编译Go文件（分别输出到对应文件夹，产物名均为EZ）
         run: |
           cd $GITHUB_WORKSPACE/源码
-          go build -o ../EZ-普通版 main.go   # main.go编译为"EZ-普通版"
-          go build -o ../EZ-多功能版 ez.go  # ez.go编译为"EZ-多功能版"
-          echo "编译完成：根目录已生成EZ-普通版、EZ-多功能版"
+          # main.go → 根目录/普通版/EZ
+          go build -o ../普通版/EZ main.go
+          # ez.go → 根目录/多功能版/EZ
+          go build -o ../多功能版/EZ ez.go
+          echo "编译完成：普通版/EZ、多功能版/EZ"
 
       - name: 创建/覆盖module标签
         run: |
@@ -43,17 +53,30 @@ jobs:
           git push origin $FIXED_TAG --force
           echo "标签 $FIXED_TAG 已更新"
 
-      # 打包双压缩包：普通版（含EZ-普通版）、多功能版（含EZ-多功能版）
-      - name: 打包双版本压缩包（跳过源码文件夹）
+      # 3. 调整：打包排除“普通版/”“多功能版/”文件夹，且只包含对应产物
+      - name: 打包双版本压缩包（排除产物文件夹，仅含对应EZ及其他文件）
         run: |
           cd $GITHUB_WORKSPACE
-          # 普通版压缩包：仅包含"EZ-普通版"及其他非编译文件
-          zip -r EZ-Clean-普通版.zip . -x ".git/*" ".github/*" "node_modules/*" "源码/*" "EZ-多功能版"
-          # 多功能版压缩包：仅包含"EZ-多功能版"及其他非编译文件
-          zip -r EZ-Clean-多功能版.zip . -x ".git/*" ".github/*" "node_modules/*" "源码/*" "EZ-普通版"
-          echo "双压缩包打包完成：EZ-Clean-普通版.zip、EZ-Clean-多功能版.zip"
+          # 普通版压缩包：仅复制“普通版/EZ”到根目录临时位置，排除产物文件夹
+          cp 普通版/EZ ./EZ  # 临时将普通版的EZ复制到根目录（命名为EZ）
+          zip -r EZ-Clean-普通版.zip . -x ".git/*" ".github/*" "node_modules/*" "源码/*" "普通版/*" "多功能版/*"  # 排除两个产物文件夹
+          rm ./EZ  # 删除根目录临时EZ
+          
+          # 多功能版压缩包：同理，复制多功能版的EZ到根目录临时位置
+          cp 多功能版/EZ ./EZ
+          zip -r EZ-Clean-多功能版.zip . -x ".git/*" ".github/*" "node_modules/*" "源码/*" "普通版/*" "多功能版/*"  # 排除两个产物文件夹
+          rm ./EZ  # 删除根目录临时EZ
+          
+          echo "双压缩包打包完成：EZ-Clean-普通版.zip（含EZ）、EZ-Clean-多功能版.zip（含EZ）"
 
-      # 生成动态发布说明（包含版本信息、文件说明）
+      # 4. 新增：打包后删除两个产物文件夹（清理残留）
+      - name: 打包后删除产物文件夹
+        run: |
+          cd $GITHUB_WORKSPACE
+          rm -rf 普通版  # 彻底删除“普通版”文件夹
+          rm -rf 多功能版  # 彻底删除“多功能版”文件夹
+          echo "产物文件夹已删除，清理完成"
+
       - name: 生成Release说明文档
         run: |
           echo "## EZ-Clean 发布说明
@@ -62,47 +85,25 @@ jobs:
           - **标签版本**：module（固定标签，每次发布覆盖更新）
           
           ### 压缩包说明
-          1. **EZ-Clean-普通版.zip**：包含`EZ-普通版`（由/源码/main.go编译），提供基础核心功能
-          2. **EZ-Clean-多功能版.zip**：包含`EZ-多功能版`（由/源码/ez.go编译），提供扩展功能
+          1. **EZ-Clean-普通版.zip**：包含核心功能二进制文件 `EZ`
+          2. **EZ-Clean-多功能版.zip**：包含扩展功能二进制文件 `EZ`
           
           ### 注意事项
-          - 两个压缩包均已排除源码文件夹及Git相关文件，可直接使用
+          - 压缩包已排除源码、Git相关文件及临时产物文件夹，可直接提取使用
           - 若需查看源码，请从仓库主分支获取" > RELEASE_NOTES.md
           echo "Release说明文档生成完成"
 
-      - name: 创建/更新GitHub Release（含双压缩包+发布说明）
-        uses: actions/create-release@v1
+      - name: 发布Release并上传双版本压缩包（支持覆盖）
+        uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        id: create_release
         with:
           tag_name: "module"
-          release_name: EZ-Clean-双版本发布（$(date +'%Y%m%d')）
-          body_path: RELEASE_NOTES.md  # 引入动态生成的发布说明
+          name: EZ-Clean-双版本发布（$(date +'%Y%m%d')）
+          body_path: RELEASE_NOTES.md
           draft: false
           prerelease: false
           overwrite: true
-
-      # 上传普通版压缩包
-      - name: 上传普通版压缩包到Release
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ${{ github.workspace }}/EZ-Clean-普通版.zip
-          asset_name: EZ-Clean-普通版.zip
-          asset_content_type: application/zip
-          overwrite: true
-
-      # 上传多功能版压缩包
-      - name: 上传多功能版压缩包到Release
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ${{ github.workspace }}/EZ-Clean-多功能版.zip
-          asset_name: EZ-Clean-多功能版.zip
-          asset_content_type: application/zip
-          overwrite: true
+          files: |
+            ${{ github.workspace }}/EZ-Clean-普通版.zip
+            ${{ github.workspace }}/EZ-Clean-多功能版.zip
