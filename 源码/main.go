@@ -307,11 +307,6 @@ func checkKernelSU() bool {
 		return true
 	}
 
-	// 检查KernelSU模块
-	if checkProcessRunning("kernel_su") {
-		return true
-	}
-	
 	return false
 }
 
