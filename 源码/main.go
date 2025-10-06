@@ -279,11 +279,6 @@ func detectRootMethod() string {
 		return "magisk"
 	}
 
-	// 检测传统SuperSU
-	if checkSuperSU() {
-		return "supersu"
-	}
-
 	return "none"
 }
 
@@ -335,22 +330,6 @@ func checkMagisk() bool {
 		return true
 	}
 	
-	return false
-}
-
-func checkSuperSU() bool {
-	superSUPaths := []string{
-		"/system/bin/su",
-		"/system/xbin/su",
-		"/sbin/su",
-		"/vendor/bin/su",
-	}
-	
-	for _, path := range superSUPaths {
-		if checkSuBinary(path) {
-			return true
-		}
-	}
 	return false
 }
 
