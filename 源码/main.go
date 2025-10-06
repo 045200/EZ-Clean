@@ -282,11 +282,6 @@ func checkKernelSU() bool {
 		}
 	}
 	
-	// 检查KernelSU守护进程
-	if checkProcessRunning("ksud") {
-		return true
-	}
-
 	return false
 }
 
