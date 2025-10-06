@@ -141,7 +141,7 @@ jobs:
           VERSION_DATE=$(date +%Y.%m.%d)
           VERSION_CODE=$(( $(date +%s) / 100 ))
           
-          # 注意：EOF 必须顶格写
+          # 使用脚本生成 module.prop 文件，避免在文件内容中使用 GitHub Actions 表达式
           cat > module.prop << EOF
 id=${{ env.MODULE_NAME }}
 name=${{ env.MODULE_NAME }}
@@ -151,6 +151,9 @@ author=GitHub Actions
 description=为 ${{ matrix.android_abi }} 构建的多架构模块（${{ matrix.variant }} 版）。
 architecture=${{ matrix.android_abi }}
 EOF
+          
+          echo "生成的 module.prop 内容:"
+          cat module.prop
 
       - name: 准备模块文件
         run: |
@@ -162,6 +165,11 @@ EOF
           # 复制通用模块文件（如果存在）
           [ -d "META-INF" ] && cp -rL META-INF/ "$MODULE_DIR"/
           [ -f "customize.sh" ] && cp customize.sh "$MODULE_DIR"/
+          [ -f "reload.sh" ] && cp customize.sh "$MODULE_DIR"/
+          [ -f "blacklist.conf" ] && cp customize.sh "$MODULE_DIR"/
+          [ -f "whitelist.conf" ] && cp customize.sh "$MODULE_DIR"/
+          [ -f "MT.conf" ] && cp customize.sh "$MODULE_DIR"/
+          [ -f "config.conf" ] && cp customize.sh "$MODULE_DIR"/
           [ -f "service.sh" ] && cp service.sh "$MODULE_DIR"/
           
           # 复制生成的 module.prop 和编译好的二进制文件
@@ -180,6 +188,19 @@ EOF
           cd ..
           echo "打包完成: ${{ steps.build_params.outputs.ZIP_NAME }}"
 
+      - name: 验证生成的 Zip 文件
+        run: |
+          set -e
+          ZIP_FILE="${{ steps.build_params.outputs.ZIP_NAME }}"
+          echo "验证 Zip 文件: $ZIP_FILE"
+          if [ -f "$ZIP_FILE" ]; then
+            unzip -l "$ZIP_FILE" | head -20
+            echo "✅ Zip 文件验证成功"
+          else
+            echo "❌ Zip 文件未找到"
+            exit 1
+          fi
+
       - name: 恢复原始 module.prop
         if: always()
         run: |
@@ -195,13 +216,12 @@ EOF
           path: ${{ steps.build_params.outputs.ZIP_NAME }}
           retention-days: 7
 
-  # 构建汇总任务，作为创建 Release 之前的“守门员”
+  # 构建汇总任务，作为创建 Release 之前的"守门员"
   build-summary:
     name: 构建结果汇总
     runs-on: ubuntu-latest
     needs: build-multi-arch
     if: always()
-    # 修正：将 output 定义移到 jobs 级别
     outputs:
       build_succeeded: ${{ steps.summary.outputs.build_succeeded }}
       
