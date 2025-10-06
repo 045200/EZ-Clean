@@ -9,8 +9,9 @@ jobs:
   build-and-release:
     runs-on: ubuntu-latest
     permissions:
-      actions: write  # 授予删除工作流记录的权限
-      contents: write # 授予发布Release的权限
+      actions: write
+      contents: write
+      pull-requests: write
 
     steps:
       - name: 拉取仓库代码
@@ -33,9 +34,9 @@ jobs:
         run: |
           cd $GITHUB_WORKSPACE
           mkdir -p 普通版 多功能版
-          echo "产物文件夹创建完成：普通版/、多功能版/"
+          echo "产物文件夹创建完成"
 
-      - name: 编译Go文件
+      - name: 编译Go文件（产物名均为EZ）
         run: |
           cd $GITHUB_WORKSPACE/源码
           go build -o ../普通版/EZ main.go
@@ -52,7 +53,7 @@ jobs:
           git push origin $FIXED_TAG --force
           echo "标签 $FIXED_TAG 已更新"
 
-      - name: 打包双版本压缩包
+      - name: 打包双版本压缩包（排除产物文件夹）
         run: |
           cd $GITHUB_WORKSPACE
           # 普通版打包
@@ -69,7 +70,7 @@ jobs:
         run: |
           cd $GITHUB_WORKSPACE
           rm -rf 普通版 多功能版
-          echo "产物文件夹已删除，清理完成"
+          echo "产物文件夹已删除"
 
       - name: 生成Release说明文档
         run: |
@@ -87,32 +88,34 @@ jobs:
           - 若需查看源码，请从仓库主分支获取" > RELEASE_NOTES.md
           echo "Release说明文档生成完成"
 
-      - name: 发布Release并上传双版本压缩包
+      # 【关键修复1】先删除旧的module标签对应的Release（避免资产缓存冲突）
+      - name: 删除旧Release（若存在）
+        run: |
+          FIXED_TAG="module"
+          # 通过GitHub API查询旧Release ID
+          RELEASE_ID=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/$FIXED_TAG" | jq -r .id)
+          # 若存在旧Release则删除
+          if [ "$RELEASE_ID" != "null" ]; then
+            curl -s -X DELETE -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/${{ github.repository }}/releases/$RELEASE_ID"
+            echo "旧Release（ID: $RELEASE_ID）已删除"
+          else
+            echo "无旧Release需删除"
+          fi
+
+      # 【关键修复2】去除名称中的时间，使用固定Release名称
+      - name: 发布Release并上传双版本压缩包（确保覆盖）
         uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: "module"
-          name: EZ-Clean-双版本发布（$(date +'%Y%m%d')）
+          name: "EZ-Clean-双版本发布"  # 核心：去除动态时间，使用固定名称
           body_path: RELEASE_NOTES.md
           draft: false
           prerelease: false
-          overwrite_files: true  # 关键：v2版本正确参数
+          overwrite_files: true  # 确保资产覆盖
           files: |
             ${{ github.workspace }}/EZ-Clean-普通版.zip
             ${{ github.workspace }}/EZ-Clean-多功能版.zip
-
-  # 新增：工作流记录清理任务
-  cleanup:
-    runs-on: ubuntu-latest
-    needs: build-and-release  # 确保在发布完成后执行清理
-    steps:
-      - name: 删除旧工作流记录
-        uses: matt-rakes/delete-workflow-runs@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          repository: ${{ github.repository }}
-          retain_days: 0  # 强制删除所有超过0天的记录
-          delete_workflow_by_state_pattern: 'completed'  # 仅删除已完成的工作流
-          delete_run_by_conclusion_pattern: 'success,failure'  # 保留成功和失败的记录
-          dry_run: false  # 直接执行删除操作
