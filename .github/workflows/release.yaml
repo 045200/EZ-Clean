@@ -60,30 +60,22 @@ jobs:
         go build -ldflags="-s -w" -o ../EZ main.go
         cd ..
         
-        mkdir -p build/basic_${{ matrix.arch }}/META-INF/com/google/android
+        mkdir -p build/basic_${{ matrix.arch }}
         cp -r META-INF whitelist.conf blacklist.conf MT.conf service.sh customize.sh reload.sh config.conf build/basic_${{ matrix.arch }}/
         cp EZ build/basic_${{ matrix.arch }}/
         
-        # Generate module.prop for basic version
-        cat > build/basic_${{ matrix.arch }}/module.prop << EOF
-id=EZ-Clean-basic
-name=EZ Clean (Basic)
-version=v${GITHUB_REF#refs/tags/v}
-versionCode=1
-author=EZ-Team
-description=Basic cleaning functionality with system perception
-support=https://github.com/045200
-EOF
+        # Copy module.prop and update.json from repository
+        cp basic/module.prop build/basic_${{ matrix.arch }}/
+        cp basic/update.json build/basic_${{ matrix.arch }}/
         
-        # Generate update.json
-        cat > build/basic_${{ matrix.arch }}/update.json << EOF
-{
-  "version": "v${GITHUB_REF#refs/tags/v}",
-  "versionCode": 1,
-  "zipUrl": "https://github.com/045200/EZ-Clean/releases/download/v${GITHUB_REF#refs/tags/v}/EZ-Clean-basic-${{ matrix.arch }}.zip",
-  "changelog": "https://github.com/045200/EZ-Clean/releases/tag/v${GITHUB_REF#refs/tags/v}"
-}
-EOF
+        # Update version in module.prop
+        sed -i "s/version=.*/version=v${GITHUB_REF#refs/tags/v}/" build/basic_${{ matrix.arch }}/module.prop
+        sed -i "s/versionCode=.*/versionCode=1/" build/basic_${{ matrix.arch }}/module.prop
+        
+        # Update version and zipUrl in update.json
+        sed -i "s/\"version\": \".*\"/\"version\": \"v${GITHUB_REF#refs/tags/v}\"/" build/basic_${{ matrix.arch }}/update.json
+        sed -i "s/\"versionCode\": [0-9]*/\"versionCode\": 1/" build/basic_${{ matrix.arch }}/update.json
+        sed -i "s|EZ-Clean-basic-.*\\.zip|EZ-Clean-basic-${{ matrix.arch }}.zip|" build/basic_${{ matrix.arch }}/update.json
 
     - name: Build multi version
       if: ${{ github.event.inputs.version_type != 'basic' }}
@@ -97,30 +89,22 @@ EOF
         go build -ldflags="-s -w" -o ../EZ ez.go
         cd ..
         
-        mkdir -p build/multi_${{ matrix.arch }}/META-INF/com/google/android
+        mkdir -p build/multi_${{ matrix.arch }}
         cp -r META-INF whitelist.conf blacklist.conf MT.conf service.sh customize.sh reload.sh config.conf build/multi_${{ matrix.arch }}/
         cp EZ build/multi_${{ matrix.arch }}/
         
-        # Generate module.prop for multi version
-        cat > build/multi_${{ matrix.arch }}/module.prop << EOF
-id=EZ-Clean-multi
-name=EZ Clean (Multi)
-version=v${GITHUB_REF#refs/tags/v}
-versionCode=1
-author=EZ-Team
-description=Advanced cleaning with health reports, metrics and adaptive features
-support=https://github.com/045200
-EOF
+        # Copy module.prop and update.json from repository
+        cp multi/module.prop build/multi_${{ matrix.arch }}/
+        cp multi/update.json build/multi_${{ matrix.arch }}/
         
-        # Generate update.json
-        cat > build/multi_${{ matrix.arch }}/update.json << EOF
-{
-  "version": "v${GITHUB_REF#refs/tags/v}",
-  "versionCode": 1,
-  "zipUrl": "https://github.com/045200/EZ-Clean/releases/download/v${GITHUB_REF#refs/tags/v}/EZ-Clean-multi-${{ matrix.arch }}.zip",
-  "changelog": "https://github.com/045200/EZ-Clean/releases/tag/v${GITHUB_REF#refs/tags/v}"
-}
-EOF
+        # Update version in module.prop
+        sed -i "s/version=.*/version=v${GITHUB_REF#refs/tags/v}/" build/multi_${{ matrix.arch }}/module.prop
+        sed -i "s/versionCode=.*/versionCode=1/" build/multi_${{ matrix.arch }}/module.prop
+        
+        # Update version and zipUrl in update.json
+        sed -i "s/\"version\": \".*\"/\"version\": \"v${GITHUB_REF#refs/tags/v}\"/" build/multi_${{ matrix.arch }}/update.json
+        sed -i "s/\"versionCode\": [0-9]*/\"versionCode\": 1/" build/multi_${{ matrix.arch }}/update.json
+        sed -i "s|EZ-Clean-multi-.*\\.zip|EZ-Clean-multi-${{ matrix.arch }}.zip|" build/multi_${{ matrix.arch }}/update.json
 
     - name: Package modules
       run: |
