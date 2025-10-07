@@ -3,6 +3,6 @@ name=EZ Clean (Basic)
 version=v1.0.0
 versionCode=1
 author=EZ-Team
-description=Basic cleaning functionality with system perception
+description=Advanced cleaning with health reports, metrics and adaptive features
 support=https://github.com/045200
 updateJson=https://raw.githubusercontent.com/045200/EZ-Clean/main/basic/update.json
