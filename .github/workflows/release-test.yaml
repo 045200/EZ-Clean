@@ -45,109 +45,106 @@ jobs:
       version: ${{ steps.version.outputs.VERSION }}
       version_code: ${{ steps.version.outputs.VERSION_CODE }}
     steps:
-    - name: Determine version and version code
-      id: version
-      run: |
-        if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-          echo "VERSION=${{ github.event.inputs.release_version }}" >> $GITHUB_OUTPUT
-          echo "VERSION_CODE=${{ github.event.inputs.version_code }}" >> $GITHUB_OUTPUT
-        else
-          echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-          echo "VERSION_CODE=1" >> $GITHUB_OUTPUT
-        fi
-        echo "Using version: ${{ steps.version.outputs.VERSION }}"
-        echo "Using version code: ${{ steps.version.outputs.VERSION_CODE }}"
+      - name: Determine version and version code
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "VERSION=${{ github.event.inputs.release_version }}" >> $GITHUB_OUTPUT
+            echo "VERSION_CODE=${{ github.event.inputs.version_code }}" >> $GITHUB_OUTPUT
+          else
+            echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+            echo "VERSION_CODE=1" >> $GITHUB_OUTPUT
+          fi
+          echo "Using version: ${{ steps.version.outputs.VERSION }}"
+          echo "Using version code: ${{ steps.version.outputs.VERSION_CODE }}"
 
   upload-version-info:
     runs-on: ubuntu-latest
     needs: version-setup
     steps:
-    - name: Save version info
-      run: |
-        echo "${{ needs.version-setup.outputs.version }}" > version.txt
-        echo "${{ needs.version-setup.outputs.version_code }}" > version_code.txt
+      - name: Save version info
+        run: |
+          echo "${{ needs.version-setup.outputs.version }}" > version.txt
+          echo "${{ needs.version-setup.outputs.version_code }}" > version_code.txt
       
-    - name: Upload version info
-      uses: actions/upload-artifact@v4
-      with:
-        name: version-info-${{ github.run_id }}-${{ github.run_attempt }}
-        path: |
-          version.txt
-          version_code.txt
-        retention-days: 1
-        if-no-files-found: warn
-        compression-level: 6
-        overwrite: false
+      - name: Upload version info
+        uses: actions/upload-artifact@v4
+        with:
+          name: version-info-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            version.txt
+            version_code.txt
+          retention-days: 1
+          if-no-files-found: warn
+          compression-level: 6
+          overwrite: false
 
   update-all-json-files:
     runs-on: ubuntu-latest
     needs: version-setup
     permissions:
-      contents: write
-    
+      contents: write  # 仅用于提交JSON文件的必要权限
+      pull-requests: none  # 明确关闭无关权限（优化项）
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-        fetch-depth: 0
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
 
-    - name: Update all JSON files (compact format)
-      run: |
-        # 更新所有4个JSON文件，保持紧凑格式
-        echo "Updating all JSON files for version ${{ needs.version-setup.outputs.version }}"
-        
-        # basic/arm.json - 使用 -c 选项保持紧凑格式
-        jq -c --arg version "${{ needs.version-setup.outputs.version }}" \
-           --arg versionCode "${{ needs.version-setup.outputs.version_code }}" \
-           --arg zipUrl "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/EZ-Clean-basic-arm.zip" \
-           --arg changelog "https://github.com/${{ github.repository }}/releases/tag/${{ needs.version-setup.outputs.version }}" \
-           '.version = $version | .versionCode = ($versionCode | tonumber) | .zipUrl = $zipUrl | .changelog = $changelog' \
-           basic/arm.json > temp1.json && mv temp1.json basic/arm.json
-        
-        # basic/arm64.json
-        jq -c --arg version "${{ needs.version-setup.outputs.version }}" \
-           --arg versionCode "${{ needs.version-setup.outputs.version_code }}" \
-           --arg zipUrl "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/EZ-Clean-basic-arm64.zip" \
-           --arg changelog "https://github.com/${{ github.repository }}/releases/tag/${{ needs.version-setup.outputs.version }}" \
-           '.version = $version | .versionCode = ($versionCode | tonumber) | .zipUrl = $zipUrl | .changelog = $changlog' \
-           basic/arm64.json > temp2.json && mv temp2.json basic/arm64.json
-        
-        # multi/arm.json
-        jq -c --arg version "${{ needs.version-setup.outputs.version }}" \
-           --arg versionCode "${{ needs.version-setup.outputs.version_code }}" \
-           --arg zipUrl "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/EZ-Clean-multi-arm.zip" \
-           --arg changelog "https://github.com/${{ github.repository }}/releases/tag/${{ needs.version-setup.outputs.version }}" \
-           '.version = $version | .versionCode = ($versionCode | tonumber) | .zipUrl = $zipUrl | .changelog = $changelog' \
-           multi/arm.json > temp3.json && mv temp3.json multi/arm.json
-        
-        # multi/arm64.json
-        jq -c --arg version "${{ needs.version-setup.outputs.version }}" \
-           --arg versionCode "${{ needs.version-setup.outputs.version_code }}" \
-           --arg zipUrl "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/EZ-Clean-multi-arm64.zip" \
-           --arg changelog "https://github.com/${{ github.repository }}/releases/tag/${{ needs.version-setup.outputs.version }}" \
-           '.version = $version | .versionCode = ($versionCode | tonumber) | .zipUrl = $zipUrl | .changelog = $changelog' \
-           multi/arm64.json > temp4.json && mv temp4.json multi/arm64.json
-        
-        echo "All JSON files updated successfully (compact format)"
+      - name: Update all JSON files (compact format)
+        run: |
+          echo "Updating all JSON files for version ${{ needs.version-setup.outputs.version }}"
+          
+          # basic/arm.json
+          jq -c --arg version "${{ needs.version-setup.outputs.version }}" \
+             --arg versionCode "${{ needs.version-setup.outputs.version_code }}" \
+             --arg zipUrl "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/EZ-Clean-basic-arm.zip" \
+             --arg changelog "https://github.com/${{ github.repository }}/releases/tag/${{ needs.version-setup.outputs.version }}" \
+             '.version = $version | .versionCode = ($versionCode | tonumber) | .zipUrl = $zipUrl | .changelog = $changelog' \
+             basic/arm.json > temp1.json && mv temp1.json basic/arm.json
+          
+          # basic/arm64.json（修正：$changlog → $changelog）
+          jq -c --arg version "${{ needs.version-setup.outputs.version }}" \
+             --arg versionCode "${{ needs.version-setup.outputs.version_code }}" \
+             --arg zipUrl "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/EZ-Clean-basic-arm64.zip" \
+             --arg changelog "https://github.com/${{ github.repository }}/releases/tag/${{ needs.version-setup.outputs.version }}" \
+             '.version = $version | .versionCode = ($versionCode | tonumber) | .zipUrl = $zipUrl | .changelog = $changelog' \
+             basic/arm64.json > temp2.json && mv temp2.json basic/arm64.json
+          
+          # multi/arm.json
+          jq -c --arg version "${{ needs.version-setup.outputs.version }}" \
+             --arg versionCode "${{ needs.version-setup.outputs.version_code }}" \
+             --arg zipUrl "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/EZ-Clean-multi-arm.zip" \
+             --arg changelog "https://github.com/${{ github.repository }}/releases/tag/${{ needs.version-setup.outputs.version }}" \
+             '.version = $version | .versionCode = ($versionCode | tonumber) | .zipUrl = $zipUrl | .changelog = $changelog' \
+             multi/arm.json > temp3.json && mv temp3.json multi/arm.json
+          
+          # multi/arm64.json
+          jq -c --arg version "${{ needs.version-setup.outputs.version }}" \
+             --arg versionCode "${{ needs.version-setup.outputs.version_code }}" \
+             --arg zipUrl "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/EZ-Clean-multi-arm64.zip" \
+             --arg changelog "https://github.com/${{ github.repository }}/releases/tag/${{ needs.version-setup.outputs.version }}" \
+             '.version = $version | .versionCode = ($versionCode | tonumber) | .zipUrl = $zipUrl | .changelog = $changelog' \
+             multi/arm64.json > temp4.json && mv temp4.json multi/arm64.json
+          
+          echo "All JSON files updated successfully (compact format)"
 
-    - name: Commit and push all JSON files
-      run: |
-        git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
-        git config --local user.name "github-actions[bot]"
-        
-        # 添加所有更新的JSON文件
-        git add basic/arm.json basic/arm64.json multi/arm.json multi/arm64.json
-        
-        # 检查是否有变更
-        if git diff --staged --quiet; then
-          echo "No changes to commit"
-        else
-          git commit -m "ci: update all JSON files for version ${{ needs.version-setup.outputs.version }}"
-          git pull --rebase origin main  # 先拉取最新更改
-          git push origin main
-          echo "Successfully updated all JSON files"
-        fi
+      - name: Commit and push all JSON files
+        run: |
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          
+          git add basic/arm.json basic/arm64.json multi/arm.json multi/arm64.json
+          
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "ci: update all JSON files for version ${{ needs.version-setup.outputs.version }}"
+            git pull --rebase origin main
+            git push origin main
+            echo "Successfully updated all JSON files"
+          fi
 
   build:
     runs-on: ubuntu-latest
@@ -179,188 +176,184 @@ jobs:
             module_type: multi
             source_file: ez.go
             module_prop_dir: arm
-
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Set up Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: ${{ env.GO_VERSION }}
-        cache: true
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
 
-    - name: Set up Android NDK
-      run: |
-        wget -q https://dl.google.com/android/repository/android-ndk-${{ env.NDK_VERSION }}-linux.zip
-        unzip -q android-ndk-${{ env.NDK_VERSION }}-linux.zip
-        echo "NDK_HOME=$PWD/android-ndk-${{ env.NDK_VERSION }}" >> $GITHUB_ENV
-        echo "$PWD/android-ndk-${{ env.NDK_VERSION }}/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
+      - name: Set up Android NDK
+        run: |
+          wget -q https://dl.google.com/android/repository/android-ndk-${{ env.NDK_VERSION }}-linux.zip
+          unzip -q android-ndk-${{ env.NDK_VERSION }}-linux.zip
+          echo "NDK_HOME=$PWD/android-ndk-${{ env.NDK_VERSION }}" >> $GITHUB_ENV
+          echo "$PWD/android-ndk-${{ env.NDK_VERSION }}/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
 
-    - name: Check build condition
-      id: check_build
-      run: |
-        if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-          if [[ "${{ github.event.inputs.build_type }}" == "all" || "${{ github.event.inputs.build_type }}" == "${{ matrix.module_type }}" ]]; then
-            echo "should_build=true" >> $GITHUB_OUTPUT
+      - name: Check build condition
+        id: check_build
+        run: |
+          # 修正：补充内层 if 的闭合 fi
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            if [[ "${{ github.event.inputs.build_type }}" == "all" || "${{ github.event.inputs.build_type }}" == "${{ matrix.module_type }}" ]]; then
+              echo "should_build=true" >> $GITHUB_OUTPUT
+            else
+              echo "should_build=false" >> $GITHUB_OUTPUT
+            fi  # 新增：闭合内层 if
           else
-            echo "should_build=false" >> $GITHUB_OUTPUT
-        else
-          echo "should_build=true" >> $GITHUB_OUTPUT
-        fi
-
-    - name: Build module
-      if: steps.check_build.outputs.should_build == 'true'
-      run: |
-        export GOOS=android
-        export GOARCH=${{ matrix.goarch }}
-        export CC=${{ matrix.cc }}
-        export CGO_ENABLED=1
-        
-        # Build Go binary
-        cd source
-        go build -ldflags="-s -w" -o ../EZ ${{ matrix.source_file }}
-        cd ..
-        
-        # Create build directory
-        mkdir -p build/${{ matrix.module_type }}_${{ matrix.arch }}
-        
-        # Copy common files
-        cp -r META-INF whitelist.conf blacklist.conf MT.conf service.sh customize.sh reload.sh config.conf build/${{ matrix.module_type }}_${{ matrix.arch }}/
-        cp EZ build/${{ matrix.module_type }}_${{ matrix.arch }}/
-        
-        # 方案二：复制预配置的 module.prop 文件
-        cp ${{ matrix.module_type }}/${{ matrix.module_prop_dir }}/module.prop build/${{ matrix.module_type }}_${{ matrix.arch }}/
-        
-        # 更新预配置的 module.prop 文件中的版本信息
-        sed -i "s|^version=.*|version=${{ needs.version-setup.outputs.version }}|" build/${{ matrix.module_type }}_${{ matrix.arch }}/module.prop
-        sed -i "s|^versionCode=.*|versionCode=${{ needs.version-setup.outputs.version_code }}|" build/${{ matrix.module_type }}_${{ matrix.arch }}/module.prop
-        
-        echo "Built ${{ matrix.module_type }} version for ${{ matrix.arch }}"
-        echo "Version: ${{ needs.version-setup.outputs.version }}"
-        echo "Version Code: ${{ needs.version-setup.outputs.version_code }}"
-        echo "Using pre-configured module.prop from: ${{ matrix.module_type }}/${{ matrix.module_prop_dir }}/module.prop"
-
-    - name: Package modules
-      if: steps.check_build.outputs.should_build == 'true'
-      run: |
-        cd build
-        for dir in */; do
-          if [ -d "$dir" ]; then
-            dir_name=$(basename "${dir%/}")
-            zip_name="EZ-Clean-${dir_name}.zip"
-            echo "Packaging contents of $dir to $zip_name"
-            
-            cd "$dir_name"
-            zip -r "../$zip_name" .
-            cd ..
-            
-            echo "Created: $zip_name"
+            echo "should_build=true" >> $GITHUB_OUTPUT
           fi
-        done
-        echo "=== Built packages ==="
-        ls -la *.zip
 
-    - name: Upload artifacts
-      uses: actions/upload-artifact@v4
-      if: steps.check_build.outputs.should_build == 'true'
-      with:
-        name: EZ-Clean-${{ matrix.module_type }}-${{ matrix.arch }}
-        path: build/EZ-Clean-${{ matrix.module_type }}_${{ matrix.arch }}.zip
-        retention-days: 1
+      - name: Build module
+        if: steps.check_build.outputs.should_build == 'true'
+        run: |
+          export GOOS=android
+          export GOARCH=${{ matrix.goarch }}
+          export CC=${{ matrix.cc }}
+          export CGO_ENABLED=1
+          
+          cd source
+          go build -ldflags="-s -w" -o ../EZ ${{ matrix.source_file }}
+          cd ..
+          
+          mkdir -p build/${{ matrix.module_type }}_${{ matrix.arch }}
+          
+          cp -r META-INF whitelist.conf blacklist.conf MT.conf service.sh customize.sh reload.sh config.conf build/${{ matrix.module_type }}_${{ matrix.arch }}/
+          cp EZ build/${{ matrix.module_type }}_${{ matrix.arch }}/
+          
+          cp ${{ matrix.module_type }}/${{ matrix.module_prop_dir }}/module.prop build/${{ matrix.module_type }}_${{ matrix.arch }}/
+          
+          sed -i "s|^version=.*|version=${{ needs.version-setup.outputs.version }}|" build/${{ matrix.module_type }}_${{ matrix.arch }}/module.prop
+          sed -i "s|^versionCode=.*|versionCode=${{ needs.version-setup.outputs.version_code }}|" build/${{ matrix.module_type }}_${{ matrix.arch }}/module.prop
+          
+          echo "Built ${{ matrix.module_type }} version for ${{ matrix.arch }}"
+          echo "Version: ${{ needs.version-setup.outputs.version }}"
+          echo "Version Code: ${{ needs.version-setup.outputs.version_code }}"
+
+      - name: Package modules
+        if: steps.check_build.outputs.should_build == 'true'
+        run: |
+          cd build
+          for dir in */; do
+            if [ -d "$dir" ]; then
+              dir_name=$(basename "${dir%/}")
+              zip_name="EZ-Clean-${dir_name}.zip"
+              echo "Packaging contents of $dir to $zip_name"
+              
+              cd "$dir_name"
+              zip -r "../$zip_name" .
+              cd ..
+              
+              echo "Created: $zip_name"
+            fi
+          done
+          echo "=== Built packages ==="
+          ls -la *.zip
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        if: steps.check_build.outputs.should_build == 'true'
+        with:
+          name: EZ-Clean-${{ matrix.module_type }}-${{ matrix.arch }}
+          path: build/EZ-Clean-${{ matrix.module_type }}_${{ matrix.arch }}.zip
+          retention-days: 1
 
   release:
     runs-on: ubuntu-latest
     needs: [build, upload-version-info]
     if: always() && (needs.build.result == 'success' || needs.build.result == 'skipped')
     env:
-      TZ: Asia/Shanghai  # 设置时区为北京时间
+      TZ: Asia/Shanghai
     permissions:
-      workflows: delete  # 新增权限配置
-
+      workflows: delete  # 删除工作流记录的必要权限
+      contents: write    # 创建Release的必要权限
     steps:
-    - name: Download all artifacts
-      uses: actions/download-artifact@v4
-      with:
-        path: artifacts
-        pattern: EZ-Clean-*
-        merge-multiple: true
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: EZ-Clean-*
+          merge-multiple: true
 
-    - name: Download version info
-      uses: actions/download-artifact@v4
-      with:
-        name: version-info-${{ github.run_id }}-${{ github.run_attempt }}
-        path: version-info
+      - name: Download version info
+        uses: actions/download-artifact@v4
+        with:
+          name: version-info-${{ github.run_id }}-${{ github.run_attempt }}
+          path: version-info
 
-    - name: Read version info
-      id: version
-      run: |
-        VERSION=$(cat version-info/version.txt)
-        VERSION_CODE=$(cat version-info/version_code.txt)
-        echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
-        echo "VERSION_CODE=$VERSION_CODE" >> $GITHUB_OUTPUT
-        echo "Using version: $VERSION"
-        echo "Using version code: $VERSION_CODE"
+      - name: Read version info
+        id: version
+        run: |
+          VERSION=$(cat version-info/version.txt)
+          VERSION_CODE=$(cat version-info/version_code.txt)
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "VERSION_CODE=$VERSION_CODE" >> $GITHUB_OUTPUT
+          echo "Using version: $VERSION"
+          echo "Using version code: $VERSION_CODE"
 
-    - name: Get current timestamp (Beijing Time)
-      id: timestamp
-      run: |
-        echo "BUILD_TIME=$(date +'%Y-%m-%d %H:%M:%S %Z')" >> $GITHUB_OUTPUT
-        echo "BUILD_DATE=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+      - name: Get current timestamp (Beijing Time)
+        id: timestamp
+        run: |
+          echo "BUILD_TIME=$(date +'%Y-%m-%d %H:%M:%S %Z')" >> $GITHUB_OUTPUT
+          echo "BUILD_DATE=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
 
-    - name: List downloaded artifacts
-      run: |
-        echo "=== Downloaded artifacts ==="
-        find artifacts -name "*.zip" | sort
+      - name: List downloaded artifacts
+        run: |
+          echo "=== Downloaded artifacts ==="
+          find artifacts -name "*.zip" | sort
 
-    - name: Create Release
-      if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
-      uses: softprops/action-gh-release@v1
-      with:
-        tag_name: ${{ steps.version.outputs.VERSION }}
-        files: artifacts/**/*.zip
-        body: |
-          # EZ-Clean Module Release ${{ steps.version.outputs.VERSION }}
-          
-          ## 说明
-          请根据CPU架构下载对应版本的模块包！支持magisk和kernelsu刷入。
-          
-          ### 版本区别
-          - **basic** 为基础款，包含功能：常规清理、MT触发清理、系统感知等基础功能。
-          - **multi** 为高级款，包含基础功能和系统感知、程序健康报告、性能指标、系统自适应等特殊功能。
-          
-          ### 支持架构
-          - arm64-v8a (第8代64位ARM处理器，兼容32位，性能更高，新设备标配)
-          - armeabi-v7a (第7代ARM处理器，支持硬件浮点运算，主流设备采用)
-          
-          ### 安装说明
-          1. 下载对应架构的zip文件
-          2. 在Magisk或KernelSU中刷入
-          3. 重启设备生效
-          
-          ## 构建信息
-          - 触发方式: ${{ github.event_name }}
-          - 构建时间: ${{ steps.timestamp.outputs.BUILD_TIME }}
-          - 版本: ${{ steps.version.outputs.VERSION }}
-          - 版本代码: ${{ steps.version.outputs.VERSION_CODE }}
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.VERSION }}
+          files: artifacts/**/*.zip
+          body: |
+            # EZ-Clean Module Release ${{ steps.version.outputs.VERSION }}
+            
+            ## 说明
+            请根据CPU架构下载对应版本的模块包！支持magisk和kernelsu刷入。
+            
+            ### 版本区别
+            - **basic** 为基础款，包含功能：常规清理、MT触发清理、系统感知等基础功能。
+            - **multi** 为高级款，包含基础功能和系统感知、程序健康报告、性能指标、系统自适应等特殊功能。
+            
+            ### 支持架构
+            - arm64-v8a (第8代64位ARM处理器，兼容32位，性能更高，新设备标配)
+            - armeabi-v7a (第7代ARM处理器，支持硬件浮点运算，主流设备采用)
+            
+            ### 安装说明
+            1. 下载对应架构的zip文件
+            2. 在Magisk或KernelSU中刷入
+            3. 重启设备生效
+            
+            ## 构建信息
+            - 触发方式: ${{ github.event_name }}
+            - 构建时间: ${{ steps.timestamp.outputs.BUILD_TIME }}
+            - 版本: ${{ steps.version.outputs.VERSION }}
+            - 版本代码: ${{ steps.version.outputs.VERSION_CODE }}
 
-    # 关键修正：使用正确的 delete-workflow-runs 仓库路径
-    - name: Cleanup old workflow runs (official tool)
-      uses: delete-workflow-runs/delete-workflow-runs@v4  # 修正为官方仓库路径
-      with:
-        workflow_id: ${{ github.workflow_id }}
-        retain_days: ${{ github.event.inputs.keep_days }}
-        retain_count: ${{ github.event.inputs.keep_runs }}
-        skip_recent: true
+      - name: Cleanup old workflow runs (official tool)
+        uses: delete-workflow-runs/delete-workflow-runs@v4
+        with:
+          workflow_id: ${{ github.workflow_id }}
+          retain_days: ${{ github.event.inputs.keep_days }}
+          retain_count: ${{ github.event.inputs.keep_runs }}
+          skip_recent: true
 
   cleanup-artifacts:
     runs-on: ubuntu-latest
     needs: [release]
     if: always()
+    permissions:
+      actions: write  # 删除Artifacts的必要权限
     steps:
-    - name: Cleanup old artifacts (official tool)
-      uses: actions/delete-artifacts@v3
-      with:
-        age: ${{ github.event.inputs.keep_days }} days  # 修正：添加单位
-        name: '*'
-        skip-recent: true
+      - name: Cleanup old artifacts (official tool)
+        uses: actions/delete-artifacts@v3
+        with:
+          age: ${{ github.event.inputs.keep_days }} days
+          name: '*'
+          skip-recent: true
