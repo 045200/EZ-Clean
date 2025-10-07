@@ -130,7 +130,7 @@ jobs:
       id: prepare_changelog
       run: |
         # 构建完全自定义的更新日志
-        cat << "EOF" > changelog.md
+        cat << EOF > changelog.md
 # EZ-Clean ${{ needs.version-setup.outputs.version }} 更新日志
 
 ## 📋 版本概览
@@ -188,7 +188,6 @@ EOF
         path: changelog.md
         retention-days: 1
 
-  # 其余部分保持不变...
   upload-version-info:
     runs-on: ubuntu-latest
     needs: [version-setup, prepare-changelog]
@@ -285,7 +284,7 @@ EOF
 
   build:
     runs-on: ubuntu-latest
-    needs: [version-setup, upload-version-info, prepare-changelog]
+    needs: [version-setup, prepare-changelog]
     strategy:
       matrix:
         include:
@@ -426,7 +425,7 @@ EOF
 
   release:
     runs-on: ubuntu-latest
-    needs: [build, upload-version-info, prepare-changelog]
+    needs: [build, update-all-json-files]
     if: always() && (needs.build.result == 'success' || needs.build.result == 'skipped')
     env:
       TZ: Asia/Shanghai
