@@ -1,4 +1,4 @@
-name: Build, Release and Update JSON
+name: Build, Release and Update
 
 on:
   push:
