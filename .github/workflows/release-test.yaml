@@ -213,7 +213,7 @@ jobs:
         go build -ldflags="-s -w" -o ../EZ ${{ matrix.source_file }}
         cd ..
         
-        # 创建使用短横线的目录名
+        # 创建目录
         mkdir -p build/${{ matrix.module_type }}-${{ matrix.arch }}
         
         # Copy common files
@@ -238,8 +238,8 @@ jobs:
         for dir in */; do
           if [ -d "$dir" ]; then
             dir_name=$(basename "${dir%/}")
-            # 使用正确的zip名称
-            zip_name="${dir_name}.zip"
+            # 使用正确的zip名称格式
+            zip_name="EZ-Clean-${dir_name}.zip"
             echo "Packaging contents of $dir to $zip_name"
             
             cd "$dir_name"
@@ -249,8 +249,27 @@ jobs:
             echo "Created: $zip_name"
           fi
         done
-        echo "=== Built packages ==="
+        echo "=== All built packages ==="
         ls -la *.zip
+
+    - name: Debug - Verify artifacts
+      if: steps.check_build.outputs.should_build == 'true'
+      run: |
+        echo "=== Verifying build artifacts ==="
+        expected_zip="build/EZ-Clean-${{ matrix.module_type }}-${{ matrix.arch }}.zip"
+        if [ -f "$expected_zip" ]; then
+          echo "✅ Found: $expected_zip"
+          echo "📦 File size: $(du -h "$expected_zip" | cut -f1)"
+          echo "🔍 File details:"
+          ls -la "$expected_zip"
+        else
+          echo "❌ Missing: $expected_zip"
+          echo "📁 Current build directory contents:"
+          ls -la build/
+          echo "🔍 All zip files in build directory:"
+          find build/ -name "*.zip" -type f
+          exit 1
+        fi
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
@@ -259,6 +278,7 @@ jobs:
         name: EZ-Clean-${{ matrix.module_type }}-${{ matrix.arch }}
         path: build/EZ-Clean-${{ matrix.module_type }}-${{ matrix.arch }}.zip
         retention-days: 1
+        if-no-files-found: error
 
   release:
     runs-on: ubuntu-latest
@@ -299,15 +319,38 @@ jobs:
 
     - name: List downloaded artifacts
       run: |
-        echo "=== Downloaded artifacts ==="
-        find artifacts -name "*.zip" | sort
+        echo "=== Downloaded artifacts structure ==="
+        find artifacts -type f -name "*.zip" | sort
+        echo "=== Artifacts directory listing ==="
+        ls -la artifacts/
+        echo "=== Artifact file details ==="
+        for file in artifacts/*.zip; do
+          if [ -f "$file" ]; then
+            echo "📦 $(basename "$file"): $(du -h "$file" | cut -f1)"
+          fi
+        done
+
+    - name: Verify artifact integrity
+      run: |
+        echo "=== Verifying artifact integrity ==="
+        for file in artifacts/*.zip; do
+          if [ -f "$file" ]; then
+            echo "🔍 Checking: $(basename "$file")"
+            if unzip -t "$file" > /dev/null 2>&1; then
+              echo "✅ $(basename "$file"): Valid zip file"
+            else
+              echo "❌ $(basename "$file"): Corrupted zip file"
+              exit 1
+            fi
+          fi
+        done
 
     - name: Create Release
       if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
       uses: softprops/action-gh-release@v1
       with:
         tag_name: ${{ steps.version.outputs.VERSION }}
-        files: artifacts/**/*.zip
+        files: artifacts/*.zip
         body: |
           # EZ-Clean Module Release ${{ steps.version.outputs.VERSION }}
           
@@ -332,6 +375,14 @@ jobs:
           - 构建时间: ${{ steps.timestamp.outputs.BUILD_TIME }}
           - 版本: ${{ steps.version.outputs.VERSION }}
           - 版本代码: ${{ steps.version.outputs.VERSION_CODE }}
+          - 包含模块包: ${{ fromJSON(steps.artifact-count.outputs.count) }}
+
+    - name: Count artifacts
+      id: artifact-count
+      run: |
+        count=$(find artifacts -name "*.zip" -type f | wc -l)
+        echo "count=$count" >> $GITHUB_OUTPUT
+        echo "Found $count artifact files"
 
     - name: Cleanup old workflows
       uses: Mattraks/delete-workflow-runs@v2
