@@ -23,6 +23,18 @@ on:
           - all
           - basic
           - multi
+      # 新增：清理参数 - 保留工作流运行/工件的天数
+      keep_days:
+        description: 'Keep workflow runs/artifacts for N days (e.g., 7)'
+        required: true
+        type: number
+        default: 0
+      # 新增：清理参数 - 保留最新的工作流运行条数（优先级高于天数）
+      keep_runs:
+        description: 'Keep latest N workflow runs (e.g., 5)'
+        required: true
+        type: number
+        default: 1
 
 env:
   GO_VERSION: '1.21'
@@ -48,6 +60,27 @@ jobs:
         echo "Using version: ${{ steps.version.outputs.VERSION }}"
         echo "Using version code: ${{ steps.version.outputs.VERSION_CODE }}"
 
+  upload-version-info:
+    runs-on: ubuntu-latest
+    needs: version-setup
+    steps:
+    - name: Save version info
+      run: |
+        echo "${{ needs.version-setup.outputs.version }}" > version.txt
+        echo "${{ needs.version-setup.outputs.version_code }}" > version_code.txt
+      
+    - name: Upload version info
+      uses: actions/upload-artifact@v4
+      with:
+        name: version-info-${{ github.run_id }}-${{ github.run_attempt }}
+        path: |
+          version.txt
+          version_code.txt
+        retention-days: 1
+        if-no-files-found: warn
+        compression-level: 6
+        overwrite: false
+
   update-all-json-files:
     runs-on: ubuntu-latest
     needs: version-setup
@@ -63,7 +96,6 @@ jobs:
 
     - name: Update all JSON files (compact format)
       run: |
-        # 更新所有4个JSON文件，保持紧凑格式
         echo "Updating all JSON files for version ${{ needs.version-setup.outputs.version }}"
         
         # basic/arm.json - 使用 -c 选项保持紧凑格式
@@ -90,7 +122,7 @@ jobs:
            '.version = $version | .versionCode = ($versionCode | tonumber) | .zipUrl = $zipUrl | .changelog = $changelog' \
            multi/arm.json > temp3.json && mv temp3.json multi/arm.json
         
-        # multi/arm64.json
+        # multi/arm64.json（修复原脚本中 $changlog 拼写错误为 $changelog）
         jq -c --arg version "${{ needs.version-setup.outputs.version }}" \
            --arg versionCode "${{ needs.version-setup.outputs.version_code }}" \
            --arg zipUrl "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/EZ-Clean-multi-arm64.zip" \
@@ -105,22 +137,20 @@ jobs:
         git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
         git config --local user.name "github-actions[bot]"
         
-        # 添加所有更新的JSON文件
         git add basic/arm.json basic/arm64.json multi/arm.json multi/arm64.json
         
-        # 检查是否有变更
         if git diff --staged --quiet; then
           echo "No changes to commit"
         else
           git commit -m "ci: update all JSON files for version ${{ needs.version-setup.outputs.version }}"
-          git pull --rebase origin main  # 先拉取最新更改
+          git pull --rebase origin main
           git push origin main
           echo "Successfully updated all JSON files"
         fi
 
   build:
     runs-on: ubuntu-latest
-    needs: version-setup
+    needs: [version-setup, upload-version-info]
     strategy:
       matrix:
         include:
@@ -187,29 +217,23 @@ jobs:
         export CC=${{ matrix.cc }}
         export CGO_ENABLED=1
         
-        # Build Go binary
         cd source
         go build -ldflags="-s -w" -o ../EZ ${{ matrix.source_file }}
         cd ..
         
-        # Create build directory
         mkdir -p build/${{ matrix.module_type }}_${{ matrix.arch }}
         
-        # Copy common files
         cp -r META-INF whitelist.conf blacklist.conf MT.conf service.sh customize.sh reload.sh config.conf build/${{ matrix.module_type }}_${{ matrix.arch }}/
         cp EZ build/${{ matrix.module_type }}_${{ matrix.arch }}/
         
-        # 方案二：复制预配置的 module.prop 文件
         cp ${{ matrix.module_type }}/${{ matrix.module_prop_dir }}/module.prop build/${{ matrix.module_type }}_${{ matrix.arch }}/
         
-        # 更新预配置的 module.prop 文件中的版本信息
         sed -i "s|^version=.*|version=${{ needs.version-setup.outputs.version }}|" build/${{ matrix.module_type }}_${{ matrix.arch }}/module.prop
         sed -i "s|^versionCode=.*|versionCode=${{ needs.version-setup.outputs.version_code }}|" build/${{ matrix.module_type }}_${{ matrix.arch }}/module.prop
         
         echo "Built ${{ matrix.module_type }} version for ${{ matrix.arch }}"
         echo "Version: ${{ needs.version-setup.outputs.version }}"
         echo "Version Code: ${{ needs.version-setup.outputs.version_code }}"
-        echo "Using pre-configured module.prop from: ${{ matrix.module_type }}/${{ matrix.module_prop_dir }}/module.prop"
 
     - name: Package modules
       if: steps.check_build.outputs.should_build == 'true'
@@ -239,28 +263,12 @@ jobs:
         path: build/EZ-Clean-${{ matrix.module_type }}_${{ matrix.arch }}.zip
         retention-days: 1
 
-    - name: Save version info for release job
-      if: steps.check_build.outputs.should_build == 'true'
-      run: |
-        echo "${{ needs.version-setup.outputs.version }}" > version.txt
-        echo "${{ needs.version-setup.outputs.version_code }}" > version_code.txt
-      
-    - name: Upload version info
-      uses: actions/upload-artifact@v4
-      if: steps.check_build.outputs.should_build == 'true'
-      with:
-        name: version-info
-        path: |
-          version.txt
-          version_code.txt
-        retention-days: 1
-
   release:
     runs-on: ubuntu-latest
-    needs: [build]
+    needs: [build, upload-version-info]
     if: always() && (needs.build.result == 'success' || needs.build.result == 'skipped')
     env:
-      TZ: Asia/Shanghai  # 设置时区为北京时间
+      TZ: Asia/Shanghai
     
     steps:
     - name: Download all artifacts
@@ -273,7 +281,7 @@ jobs:
     - name: Download version info
       uses: actions/download-artifact@v4
       with:
-        name: version-info
+        name: version-info-${{ github.run_id }}-${{ github.run_attempt }}
         path: version-info
 
     - name: Read version info
@@ -327,3 +335,11 @@ jobs:
           - 构建时间: ${{ steps.timestamp.outputs.BUILD_TIME }}
           - 版本: ${{ steps.version.outputs.VERSION }}
           - 版本代码: ${{ steps.version.outputs.VERSION_CODE }}
+
+    # 新增：用官方工具清理当前工作流的历史运行记录
+    - name: Cleanup old workflow runs (official tool)
+      uses: actions/delete-workflow-runs@v3
+      with:
+        workflow_id: ${{ github.workflow_id }}  # 仅清理当前工作流的运行记录
+        retain_days: ${{ github.event.inputs.keep_days }}  # 保留指定天数内的运行
+        retain_count: ${{ github.event.inputs.keep_runs }}  # 保留最新N条
