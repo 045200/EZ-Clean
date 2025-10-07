@@ -74,7 +74,7 @@ jobs:
     needs: version-setup
     permissions:
       contents: write
-    
+
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
@@ -111,12 +111,12 @@ jobs:
            '.version = $version | .versionCode = ($versionCode | tonumber) | .zipUrl = $zipUrl | .changelog = $changelog' \
            multi/arm.json > temp3.json && mv temp3.json multi/arm.json
         
-        # multi/arm64.json
+        # multi/arm64.json - 修复拼写错误
         jq -c --arg version "${{ needs.version-setup.outputs.version }}" \
            --arg versionCode "${{ needs.version-setup.outputs.version_code }}" \
            --arg zipUrl "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/EZ-Clean-multi-arm64.zip" \
            --arg changelog "https://github.com/${{ github.repository }}/releases/tag/${{ needs.version-setup.outputs.version }}" \
-           '.version = $version | .versionCode = ($versionCode | tonumber) | .zipUrl = $zipUrl | .changelog = $changlog' \
+           '.version = $version | .versionCode = ($versionCode | tonumber) | .zipUrl = $zipUrl | .changelog = $changelog' \
            multi/arm64.json > temp4.json && mv temp4.json multi/arm64.json
         
         echo "All JSON files updated successfully (compact format)"
@@ -134,7 +134,7 @@ jobs:
           echo "No changes to commit"
         else
           git commit -m "ci: update all JSON files for version ${{ needs.version-setup.outputs.version }}"
-          git pull --rebase origin main  # 先拉取最新更改
+          git pull --rebase origin main
           git push origin main
           echo "Successfully updated all JSON files"
         fi
@@ -213,24 +213,23 @@ jobs:
         go build -ldflags="-s -w" -o ../EZ ${{ matrix.source_file }}
         cd ..
         
-        # Create build directory
-        mkdir -p build/${{ matrix.module_type }}_${{ matrix.arch }}
+        # 修复：创建使用短横线的目录名
+        mkdir -p build/${{ matrix.module_type }}-${{ matrix.arch }}
         
         # Copy common files
-        cp -r META-INF whitelist.conf blacklist.conf MT.conf service.sh customize.sh reload.sh config.conf build/${{ matrix.module_type }}_${{ matrix.arch }}/
-        cp EZ build/${{ matrix.module_type }}_${{ matrix.arch }}/
+        cp -r META-INF whitelist.conf blacklist.conf MT.conf service.sh customize.sh reload.sh config.conf build/${{ matrix.module_type }}-${{ matrix.arch }}/
+        cp EZ build/${{ matrix.module_type }}-${{ matrix.arch }}/
         
-        # 方案二：复制预配置的 module.prop 文件
-        cp ${{ matrix.module_type }}/${{ matrix.module_prop_dir }}/module.prop build/${{ matrix.module_type }}_${{ matrix.arch }}/
+        # 复制预配置的 module.prop 文件
+        cp ${{ matrix.module_type }}/${{ matrix.module_prop_dir }}/module.prop build/${{ matrix.module_type }}-${{ matrix.arch }}/
         
         # 更新预配置的 module.prop 文件中的版本信息
-        sed -i "s|^version=.*|version=${{ needs.version-setup.outputs.version }}|" build/${{ matrix.module_type }}_${{ matrix.arch }}/module.prop
-        sed -i "s|^versionCode=.*|versionCode=${{ needs.version-setup.outputs.version_code }}|" build/${{ matrix.module_type }}_${{ matrix.arch }}/module.prop
+        sed -i "s|^version=.*|version=${{ needs.version-setup.outputs.version }}|" build/${{ matrix.module_type }}-${{ matrix.arch }}/module.prop
+        sed -i "s|^versionCode=.*|versionCode=${{ needs.version-setup.outputs.version_code }}|" build/${{ matrix.module_type }}-${{ matrix.arch }}/module.prop
         
         echo "Built ${{ matrix.module_type }} version for ${{ matrix.arch }}"
         echo "Version: ${{ needs.version-setup.outputs.version }}"
         echo "Version Code: ${{ needs.version-setup.outputs.version_code }}"
-        echo "Using pre-configured module.prop from: ${{ matrix.module_type }}/${{ matrix.module_prop_dir }}/module.prop"
 
     - name: Package modules
       if: steps.check_build.outputs.should_build == 'true'
@@ -239,7 +238,8 @@ jobs:
         for dir in */; do
           if [ -d "$dir" ]; then
             dir_name=$(basename "${dir%/}")
-            zip_name="EZ-Clean-${dir_name}.zip"
+            # 使用正确的zip名称
+            zip_name="${dir_name}.zip"
             echo "Packaging contents of $dir to $zip_name"
             
             cd "$dir_name"
@@ -257,7 +257,8 @@ jobs:
       if: steps.check_build.outputs.should_build == 'true'
       with:
         name: EZ-Clean-${{ matrix.module_type }}-${{ matrix.arch }}
-        path: build/EZ-Clean-${{ matrix.module_type }}_${{ matrix.arch }}.zip
+        # 修复：使用正确的路径（短横线）
+        path: build/EZ-Clean-${{ matrix.module_type }}-${{ matrix.arch }}.zip
         retention-days: 1
 
   release:
@@ -265,8 +266,8 @@ jobs:
     needs: [build, upload-version-info]
     if: always() && (needs.build.result == 'success' || needs.build.result == 'skipped')
     env:
-      TZ: Asia/Shanghai  # 设置时区为北京时间
-    
+      TZ: Asia/Shanghai
+
     steps:
     - name: Download all artifacts
       uses: actions/download-artifact@v4
