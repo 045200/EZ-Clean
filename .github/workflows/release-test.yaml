@@ -111,7 +111,7 @@ jobs:
            '.version = $version | .versionCode = ($versionCode | tonumber) | .zipUrl = $zipUrl | .changelog = $changelog' \
            multi/arm.json > temp3.json && mv temp3.json multi/arm.json
         
-        # multi/arm64.json - 修复拼写错误
+        # multi/arm64.json
         jq -c --arg version "${{ needs.version-setup.outputs.version }}" \
            --arg versionCode "${{ needs.version-setup.outputs.version_code }}" \
            --arg zipUrl "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/EZ-Clean-multi-arm64.zip" \
@@ -213,7 +213,7 @@ jobs:
         go build -ldflags="-s -w" -o ../EZ ${{ matrix.source_file }}
         cd ..
         
-        # 修复：创建使用短横线的目录名
+        # 创建使用短横线的目录名
         mkdir -p build/${{ matrix.module_type }}-${{ matrix.arch }}
         
         # Copy common files
@@ -257,7 +257,6 @@ jobs:
       if: steps.check_build.outputs.should_build == 'true'
       with:
         name: EZ-Clean-${{ matrix.module_type }}-${{ matrix.arch }}
-        # 修复：使用正确的路径（短横线）
         path: build/EZ-Clean-${{ matrix.module_type }}-${{ matrix.arch }}.zip
         retention-days: 1
 
@@ -335,15 +334,14 @@ jobs:
           - 版本代码: ${{ steps.version.outputs.VERSION_CODE }}
 
     - name: Cleanup old workflows
-        uses: Mattraks/delete-workflow-runs@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          repository: ${{ github.repository }}
-          retain_days: 0
-          keep_minimum_runs: 1
+      uses: Mattraks/delete-workflow-runs@v2
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        repository: ${{ github.repository }}
+        retain_days: 0
+        keep_minimum_runs: 1
 
-      # 21. 清理旧工件- 核心步骤（减少存储占用）
     - name: Cleanup old artifacts
-        uses: c-hive/gha-remove-artifacts@v1.4.0
-        with:
-          age: '3 days'
+      uses: c-hive/gha-remove-artifacts@v1.4.0
+      with:
+        age: '3 days'
