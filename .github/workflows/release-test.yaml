@@ -23,31 +23,72 @@ on:
           - all
           - basic
           - multi
-      changelog_content:
-        description: 'Release changelog (Markdown format)'
+      
+      # 第一个标题部分 - 完全自定义
+      custom_title_1:
+        description: '第一个自定义标题 (支持Markdown格式)'
         required: false
         type: string
-        default: |
-          # EZ-Clean {{version}} 更新日志
-
-          ## 🎉 新版本发布
-
-          ### 新增功能
-          - 系统清理优化
-          - 性能监控增强
-          - 用户体验改进
-
-          ### 修复问题
-          - 修复已知问题
-          - 优化稳定性
-
-          ### 安装说明
-          1. 下载对应架构的模块包
-          2. 在 Magisk 或 KernelSU 中刷入
-          3. 重启设备生效
-
-          ---
-          *构建时间: {{build_time}}*
+        default: '### 🎉 新功能'
+      custom_content_1_1:
+        description: '第一个标题下的内容项 1'
+        required: false
+        type: string
+        default: '- 新增系统清理功能'
+      custom_content_1_2:
+        description: '第一个标题下的内容项 2'
+        required: false
+        type: string
+        default: '- 优化性能监控'
+      custom_content_1_3:
+        description: '第一个标题下的内容项 3'
+        required: false
+        type: string
+        default: '- 改进用户界面'
+      
+      # 第二个标题部分 - 完全自定义
+      custom_title_2:
+        description: '第二个自定义标题 (支持Markdown格式)'
+        required: false
+        type: string
+        default: '### 🐛 问题修复'
+      custom_content_2_1:
+        description: '第二个标题下的内容项 1'
+        required: false
+        type: string
+        default: '- 修复内存泄漏问题'
+      custom_content_2_2:
+        description: '第二个标题下的内容项 2'
+        required: false
+        type: string
+        default: '- 修复崩溃问题'
+      custom_content_2_3:
+        description: '第二个标题下的内容项 3'
+        required: false
+        type: string
+        default: '- 优化稳定性'
+      
+      # 第三个标题部分 - 完全自定义
+      custom_title_3:
+        description: '第三个自定义标题 (支持Markdown格式)'
+        required: false
+        type: string
+        default: '### 🔧 技术改进'
+      custom_content_3_1:
+        description: '第三个标题下的内容项 1'
+        required: false
+        type: string
+        default: '- 更新构建工具链'
+      custom_content_3_2:
+        description: '第三个标题下的内容项 2'
+        required: false
+        type: string
+        default: '- 优化代码结构'
+      custom_content_3_3:
+        description: '第三个标题下的内容项 3'
+        required: false
+        type: string
+        default: '- 改进错误处理'
 
 env:
   GO_VERSION: '1.21'
@@ -85,56 +126,53 @@ jobs:
         echo "BUILD_TIME=$(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M:%S UTC%z')" >> $GITHUB_OUTPUT
         echo "BUILD_DATE=$(TZ='Asia/Shanghai' date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
 
-    - name: Prepare changelog content
+    - name: Prepare fully customized changelog content
       id: prepare_changelog
       run: |
-        if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ github.event.inputs.changelog_content }}" != "" ]]; then
-          # 使用用户输入的 changelog 内容
-          CHANGELOG_CONTENT="${{ github.event.inputs.changelog_content }}"
-          echo "Using user-provided changelog content"
-        else
-          # 生成默认 changelog
-          CHANGELOG_CONTENT=$(cat << EOF
-          # EZ-Clean ${{ needs.version-setup.outputs.version }} 更新日志
+        # 构建完全自定义的更新日志
+        CHANGELOG_CONTENT=$(cat << EOF
+# EZ-Clean ${{ needs.version-setup.outputs.version }} 更新日志
 
-          ## 🎉 新版本发布
+## 📋 版本概览
+*版本: ${{ needs.version-setup.outputs.version }}*  
+*版本代码: ${{ needs.version-setup.outputs.version_code }}*  
+*构建时间: ${{ steps.timestamp.outputs.BUILD_TIME }}*
 
-          ### 新增功能
-          - 系统清理优化
-          - 性能监控增强
-          - 用户体验改进
+${{ github.event.inputs.custom_title_1 }}
+${{ github.event.inputs.custom_content_1_1 }}
+${{ github.event.inputs.custom_content_1_2 }}
+${{ github.event.inputs.custom_content_1_3 }}
 
-          ### 修复问题
-          - 修复已知问题
-          - 优化稳定性
+${{ github.event.inputs.custom_title_2 }}
+${{ github.event.inputs.custom_content_2_1 }}
+${{ github.event.inputs.custom_content_2_2 }}
+${{ github.event.inputs.custom_content_2_3 }}
 
-          ### 技术改进
-          - 更新构建工具链
-          - 优化代码结构
+${{ github.event.inputs.custom_title_3 }}
+${{ github.event.inputs.custom_content_3_1 }}
+${{ github.event.inputs.custom_content_3_2 }}
+${{ github.event.inputs.custom_content_3_3 }}
 
-          ## 📦 安装说明
-          1. 下载对应架构的模块包
-          2. 在 Magisk 或 KernelSU 中刷入
-          3. 重启设备生效
+## 📦 安装说明
+1. **下载模块**: 选择适合您设备架构的模块包
+2. **刷入模块**: 在 Magisk 或 KernelSU 中安装
+3. **重启设备**: 使模块生效
+4. **配置设置**: 根据需求调整模块配置
 
-          ## ⚠️ 注意事项
-          - 请确保备份重要数据
-          - 建议在安装前阅读完整日志
+## ⚠️ 注意事项
+- 💾 **备份数据**: 安装前请备份重要数据
+- 📱 **兼容性**: 确保模块与您的设备和系统版本兼容
+- 🔄 **更新建议**: 建议从旧版本升级时先卸载旧版再安装新版
+- ❓ **问题反馈**: 如遇问题请提交 Issue 并提供详细日志
 
-          ---
-          *构建时间: ${{ steps.timestamp.outputs.BUILD_TIME }}*
-          *版本: ${{ needs.version-setup.outputs.version }}*
-          *版本代码: ${{ needs.version-setup.outputs.version_code }}*
-          EOF
-          )
-          echo "Using default changelog content"
-        fi
+---
+*构建信息: ${{ steps.timestamp.outputs.BUILD_TIME }} | 版本: ${{ needs.version-setup.outputs.version }} (${{ needs.version-setup.outputs.version_code }})*
+EOF
+        )
 
-        # 替换模板变量
-        CHANGELOG_CONTENT="${CHANGELOG_CONTENT//\{\{version\}\}/${{ needs.version-setup.outputs.version }}}"
-        CHANGELOG_CONTENT="${CHANGELOG_CONTENT//\{\{build_time\}\}/${{ steps.timestamp.outputs.BUILD_TIME }}}"
-        CHANGELOG_CONTENT="${CHANGELOG_CONTENT//\{\{version_code\}\}/${{ needs.version-setup.outputs.version_code }}}"
-
+        # 清理空行（如果用户留空了某些输入）
+        CHANGELOG_CONTENT=$(echo "$CHANGELOG_CONTENT" | sed '/^$/{N;/^\n$/d;}')
+        
         # 将内容保存到文件
         echo "$CHANGELOG_CONTENT" > changelog.md
         
@@ -143,9 +181,9 @@ jobs:
         echo "$CHANGELOG_CONTENT" >> $GITHUB_OUTPUT
         echo "EOF" >> $GITHUB_OUTPUT
 
-        echo "✅ Changelog prepared successfully"
-        echo "📝 Changelog preview (first 10 lines):"
-        head -10 changelog.md
+        echo "✅ Fully customized changelog prepared successfully"
+        echo "📝 Changelog preview (first 15 lines):"
+        head -15 changelog.md
 
     - name: Upload changelog artifact
       uses: actions/upload-artifact@v4
