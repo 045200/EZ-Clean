@@ -129,45 +129,45 @@ jobs:
     - name: Prepare fully customized changelog content
       id: prepare_changelog
       run: |
-        # 构建完全自定义的更新日志
-        cat << EOF > changelog.md
-# EZ-Clean ${{ needs.version-setup.outputs.version }} 更新日志
-
-## 📋 版本概览
-*版本: ${{ needs.version-setup.outputs.version }}*  
-*版本代码: ${{ needs.version-setup.outputs.version_code }}*  
-*构建时间: ${{ steps.timestamp.outputs.BUILD_TIME }}*
-
-${{ github.event.inputs.custom_title_1 }}
-${{ github.event.inputs.custom_content_1_1 }}
-${{ github.event.inputs.custom_content_1_2 }}
-${{ github.event.inputs.custom_content_1_3 }}
-
-${{ github.event.inputs.custom_title_2 }}
-${{ github.event.inputs.custom_content_2_1 }}
-${{ github.event.inputs.custom_content_2_2 }}
-${{ github.event.inputs.custom_content_2_3 }}
-
-${{ github.event.inputs.custom_title_3 }}
-${{ github.event.inputs.custom_content_3_1 }}
-${{ github.event.inputs.custom_content_3_2 }}
-${{ github.event.inputs.custom_content_3_3 }}
-
-## 📦 安装说明
-1. **下载模块**: 选择适合您设备架构的模块包
-2. **刷入模块**: 在 Magisk 或 KernelSU 中安装
-3. **重启设备**: 使模块生效
-4. **配置设置**: 根据需求调整模块配置
-
-## ⚠️ 注意事项
-- 💾 **备份数据**: 安装前请备份重要数据
-- 📱 **兼容性**: 确保模块与您的设备和系统版本兼容
-- 🔄 **更新建议**: 建议从旧版本升级时先卸载旧版再安装新版
-- ❓ **问题反馈**: 如遇问题请提交 Issue 并提供详细日志
-
----
-*构建信息: ${{ steps.timestamp.outputs.BUILD_TIME }} | 版本: ${{ needs.version-setup.outputs.version }} (${{ needs.version-setup.outputs.version_code }})*
-EOF
+        # 创建 changelog.md 文件
+        {
+          echo "# EZ-Clean ${{ needs.version-setup.outputs.version }} 更新日志"
+          echo ""
+          echo "## 📋 版本概览"
+          echo "*版本: ${{ needs.version-setup.outputs.version }}*  "
+          echo "*版本代码: ${{ needs.version-setup.outputs.version_code }}*  "
+          echo "*构建时间: ${{ steps.timestamp.outputs.BUILD_TIME }}*"
+          echo ""
+          echo "${{ github.event.inputs.custom_title_1 }}"
+          echo "${{ github.event.inputs.custom_content_1_1 }}"
+          echo "${{ github.event.inputs.custom_content_1_2 }}"
+          echo "${{ github.event.inputs.custom_content_1_3 }}"
+          echo ""
+          echo "${{ github.event.inputs.custom_title_2 }}"
+          echo "${{ github.event.inputs.custom_content_2_1 }}"
+          echo "${{ github.event.inputs.custom_content_2_2 }}"
+          echo "${{ github.event.inputs.custom_content_2_3 }}"
+          echo ""
+          echo "${{ github.event.inputs.custom_title_3 }}"
+          echo "${{ github.event.inputs.custom_content_3_1 }}"
+          echo "${{ github.event.inputs.custom_content_3_2 }}"
+          echo "${{ github.event.inputs.custom_content_3_3 }}"
+          echo ""
+          echo "## 📦 安装说明"
+          echo "1. **下载模块**: 选择适合您设备架构的模块包"
+          echo "2. **刷入模块**: 在 Magisk 或 KernelSU 中安装"
+          echo "3. **重启设备**: 使模块生效"
+          echo "4. **配置设置**: 根据需求调整模块配置"
+          echo ""
+          echo "## ⚠️ 注意事项"
+          echo "- 💾 **备份数据**: 安装前请备份重要数据"
+          echo "- 📱 **兼容性**: 确保模块与您的设备和系统版本兼容"
+          echo "- 🔄 **更新建议**: 建议从旧版本升级时先卸载旧版再安装新版"
+          echo "- ❓ **问题反馈**: 如遇问题请提交 Issue 并提供详细日志"
+          echo ""
+          echo "---"
+          echo "*构建信息: ${{ steps.timestamp.outputs.BUILD_TIME }} | 版本: ${{ needs.version-setup.outputs.version }} (${{ needs.version-setup.outputs.version_code }})*"
+        } > changelog.md
         
         # 读取文件内容到变量
         CHANGELOG_CONTENT=$(cat changelog.md)
@@ -188,6 +188,7 @@ EOF
         path: changelog.md
         retention-days: 1
 
+  # 其余部分保持不变...
   upload-version-info:
     runs-on: ubuntu-latest
     needs: [version-setup, prepare-changelog]
