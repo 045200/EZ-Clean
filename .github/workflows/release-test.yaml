@@ -333,3 +333,17 @@ jobs:
           - 构建时间: ${{ steps.timestamp.outputs.BUILD_TIME }}
           - 版本: ${{ steps.version.outputs.VERSION }}
           - 版本代码: ${{ steps.version.outputs.VERSION_CODE }}
+
+      - name: Cleanup old workflows
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          retain_days: 0
+          keep_minimum_runs: 1
+
+      # 21. 清理旧工件- 核心步骤（减少存储占用）
+      - name: Cleanup old artifacts
+        uses: c-hive/gha-remove-artifacts@v1.4.0
+        with:
+          age: '3 days'
