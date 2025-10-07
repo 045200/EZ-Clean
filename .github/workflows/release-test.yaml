@@ -23,6 +23,31 @@ on:
           - all
           - basic
           - multi
+      changelog_content:
+        description: 'Release changelog (Markdown format)'
+        required: false
+        type: string
+        default: |
+          # EZ-Clean {{version}} 更新日志
+
+          ## 🎉 新版本发布
+
+          ### 新增功能
+          - 系统清理优化
+          - 性能监控增强
+          - 用户体验改进
+
+          ### 修复问题
+          - 修复已知问题
+          - 优化稳定性
+
+          ### 安装说明
+          1. 下载对应架构的模块包
+          2. 在 Magisk 或 KernelSU 中刷入
+          3. 重启设备生效
+
+          ---
+          *构建时间: {{build_time}}*
 
 env:
   GO_VERSION: '1.21'
@@ -48,14 +73,96 @@ jobs:
         echo "Using version: ${{ steps.version.outputs.VERSION }}"
         echo "Using version code: ${{ steps.version.outputs.VERSION_CODE }}"
 
-  upload-version-info:
+  prepare-changelog:
     runs-on: ubuntu-latest
     needs: version-setup
+    outputs:
+      changelog_content: ${{ steps.prepare_changelog.outputs.changelog_content }}
+    steps:
+    - name: Get current timestamp (Beijing Time)
+      id: timestamp
+      run: |
+        echo "BUILD_TIME=$(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M:%S UTC%z')" >> $GITHUB_OUTPUT
+        echo "BUILD_DATE=$(TZ='Asia/Shanghai' date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+
+    - name: Prepare changelog content
+      id: prepare_changelog
+      run: |
+        if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ github.event.inputs.changelog_content }}" != "" ]]; then
+          # 使用用户输入的 changelog 内容
+          CHANGELOG_CONTENT="${{ github.event.inputs.changelog_content }}"
+          echo "Using user-provided changelog content"
+        else
+          # 生成默认 changelog
+          CHANGELOG_CONTENT=$(cat << EOF
+          # EZ-Clean ${{ needs.version-setup.outputs.version }} 更新日志
+
+          ## 🎉 新版本发布
+
+          ### 新增功能
+          - 系统清理优化
+          - 性能监控增强
+          - 用户体验改进
+
+          ### 修复问题
+          - 修复已知问题
+          - 优化稳定性
+
+          ### 技术改进
+          - 更新构建工具链
+          - 优化代码结构
+
+          ## 📦 安装说明
+          1. 下载对应架构的模块包
+          2. 在 Magisk 或 KernelSU 中刷入
+          3. 重启设备生效
+
+          ## ⚠️ 注意事项
+          - 请确保备份重要数据
+          - 建议在安装前阅读完整日志
+
+          ---
+          *构建时间: ${{ steps.timestamp.outputs.BUILD_TIME }}*
+          *版本: ${{ needs.version-setup.outputs.version }}*
+          *版本代码: ${{ needs.version-setup.outputs.version_code }}*
+          EOF
+          )
+          echo "Using default changelog content"
+        fi
+
+        # 替换模板变量
+        CHANGELOG_CONTENT="${CHANGELOG_CONTENT//\{\{version\}\}/${{ needs.version-setup.outputs.version }}}"
+        CHANGELOG_CONTENT="${CHANGELOG_CONTENT//\{\{build_time\}\}/${{ steps.timestamp.outputs.BUILD_TIME }}}"
+        CHANGELOG_CONTENT="${CHANGELOG_CONTENT//\{\{version_code\}\}/${{ needs.version-setup.outputs.version_code }}}"
+
+        # 将内容保存到文件
+        echo "$CHANGELOG_CONTENT" > changelog.md
+        
+        # 同时输出到步骤输出
+        echo "changelog_content<<EOF" >> $GITHUB_OUTPUT
+        echo "$CHANGELOG_CONTENT" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+
+        echo "✅ Changelog prepared successfully"
+        echo "📝 Changelog preview (first 10 lines):"
+        head -10 changelog.md
+
+    - name: Upload changelog artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: changelog-${{ github.run_id }}-${{ github.run_attempt }}
+        path: changelog.md
+        retention-days: 1
+
+  upload-version-info:
+    runs-on: ubuntu-latest
+    needs: [version-setup, prepare-changelog]
     steps:
     - name: Save version info
       run: |
         echo "${{ needs.version-setup.outputs.version }}" > version.txt
         echo "${{ needs.version-setup.outputs.version_code }}" > version_code.txt
+        echo "${{ needs.prepare-changelog.outputs.changelog_content }}" > changelog_content.txt
       
     - name: Upload version info
       uses: actions/upload-artifact@v4
@@ -64,6 +171,7 @@ jobs:
         path: |
           version.txt
           version_code.txt
+          changelog_content.txt
         retention-days: 1
         if-no-files-found: warn
         compression-level: 6
@@ -71,7 +179,7 @@ jobs:
 
   update-all-json-files:
     runs-on: ubuntu-latest
-    needs: version-setup
+    needs: [version-setup, prepare-changelog]
     permissions:
       contents: write
 
@@ -84,14 +192,14 @@ jobs:
 
     - name: Update all JSON files (compact format)
       run: |
-        # 更新所有4个JSON文件，保持紧凑格式
+        # 更新所有4个JSON文件，保持紧凑格式，使用正确的changelog链接
         echo "Updating all JSON files for version ${{ needs.version-setup.outputs.version }}"
         
         # basic/arm.json - 使用 -c 选项保持紧凑格式
         jq -c --arg version "${{ needs.version-setup.outputs.version }}" \
            --arg versionCode "${{ needs.version-setup.outputs.version_code }}" \
            --arg zipUrl "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/EZ-Clean-basic-arm.zip" \
-           --arg changelog "https://github.com/${{ github.repository }}/releases/tag/${{ needs.version-setup.outputs.version }}" \
+           --arg changelog "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/changelog.md" \
            '.version = $version | .versionCode = ($versionCode | tonumber) | .zipUrl = $zipUrl | .changelog = $changelog' \
            basic/arm.json > temp1.json && mv temp1.json basic/arm.json
         
@@ -99,7 +207,7 @@ jobs:
         jq -c --arg version "${{ needs.version-setup.outputs.version }}" \
            --arg versionCode "${{ needs.version-setup.outputs.version_code }}" \
            --arg zipUrl "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/EZ-Clean-basic-arm64.zip" \
-           --arg changelog "https://github.com/${{ github.repository }}/releases/tag/${{ needs.version-setup.outputs.version }}" \
+           --arg changelog "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/changelog.md" \
            '.version = $version | .versionCode = ($versionCode | tonumber) | .zipUrl = $zipUrl | .changelog = $changelog' \
            basic/arm64.json > temp2.json && mv temp2.json basic/arm64.json
         
@@ -107,7 +215,7 @@ jobs:
         jq -c --arg version "${{ needs.version-setup.outputs.version }}" \
            --arg versionCode "${{ needs.version-setup.outputs.version_code }}" \
            --arg zipUrl "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/EZ-Clean-multi-arm.zip" \
-           --arg changelog "https://github.com/${{ github.repository }}/releases/tag/${{ needs.version-setup.outputs.version }}" \
+           --arg changelog "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/changelog.md" \
            '.version = $version | .versionCode = ($versionCode | tonumber) | .zipUrl = $zipUrl | .changelog = $changelog' \
            multi/arm.json > temp3.json && mv temp3.json multi/arm.json
         
@@ -115,11 +223,12 @@ jobs:
         jq -c --arg version "${{ needs.version-setup.outputs.version }}" \
            --arg versionCode "${{ needs.version-setup.outputs.version_code }}" \
            --arg zipUrl "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/EZ-Clean-multi-arm64.zip" \
-           --arg changelog "https://github.com/${{ github.repository }}/releases/tag/${{ needs.version-setup.outputs.version }}" \
+           --arg changelog "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/changelog.md" \
            '.version = $version | .versionCode = ($versionCode | tonumber) | .zipUrl = $zipUrl | .changelog = $changelog' \
            multi/arm64.json > temp4.json && mv temp4.json multi/arm64.json
         
         echo "All JSON files updated successfully (compact format)"
+        echo "Changelog URL: https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/changelog.md"
 
     - name: Commit and push all JSON files
       run: |
@@ -141,7 +250,7 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
-    needs: [version-setup, upload-version-info]
+    needs: [version-setup, upload-version-info, prepare-changelog]
     strategy:
       matrix:
         include:
@@ -282,7 +391,7 @@ jobs:
 
   release:
     runs-on: ubuntu-latest
-    needs: [build, upload-version-info]
+    needs: [build, upload-version-info, prepare-changelog]
     if: always() && (needs.build.result == 'success' || needs.build.result == 'skipped')
     env:
       TZ: Asia/Shanghai
@@ -301,6 +410,12 @@ jobs:
         name: version-info-${{ github.run_id }}-${{ github.run_attempt }}
         path: version-info
 
+    - name: Download changelog
+      uses: actions/download-artifact@v4
+      with:
+        name: changelog-${{ github.run_id }}-${{ github.run_attempt }}
+        path: artifacts
+
     - name: Read version info
       id: version
       run: |
@@ -314,17 +429,17 @@ jobs:
     - name: Get current timestamp (Beijing Time)
       id: timestamp
       run: |
-        echo "BUILD_TIME=$(date +'%Y-%m-%d %H:%M:%S %Z')" >> $GITHUB_OUTPUT
-        echo "BUILD_DATE=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+        echo "BUILD_TIME=$(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M:%S UTC%z')" >> $GITHUB_OUTPUT
+        echo "BUILD_DATE=$(TZ='Asia/Shanghai' date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
 
     - name: List downloaded artifacts
       run: |
         echo "=== Downloaded artifacts structure ==="
-        find artifacts -type f -name "*.zip" | sort
+        find artifacts -type f | sort
         echo "=== Artifacts directory listing ==="
         ls -la artifacts/
         echo "=== Artifact file details ==="
-        for file in artifacts/*.zip; do
+        for file in artifacts/*; do
           if [ -f "$file" ]; then
             echo "📦 $(basename "$file"): $(du -h "$file" | cut -f1)"
           fi
@@ -349,40 +464,18 @@ jobs:
       id: artifact-count
       run: |
         count=$(find artifacts -name "*.zip" -type f | wc -l)
+        changelog_count=$(find artifacts -name "changelog.md" -type f | wc -l)
         echo "count=$count" >> $GITHUB_OUTPUT
-        echo "Found $count artifact files"
+        echo "changelog_count=$changelog_count" >> $GITHUB_OUTPUT
+        echo "Found $count artifact files and $changelog_count changelog files"
 
     - name: Create Release
       if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
       uses: softprops/action-gh-release@v1
       with:
         tag_name: ${{ steps.version.outputs.VERSION }}
-        files: artifacts/*.zip
-        body: |
-          # EZ-Clean Module Release ${{ steps.version.outputs.VERSION }}
-          
-          ## 说明
-          请根据CPU架构下载对应版本的模块包！支持magisk和kernelsu刷入。
-          
-          ### 版本区别
-          - **basic** 为基础款，包含功能：常规清理、MT触发清理、系统感知等基础功能。
-          - **multi** 为高级款，包含基础功能和系统感知、程序健康报告、性能指标、系统自适应等特殊功能。
-          
-          ### 支持架构
-          - arm64-v8a (第8代64位ARM处理器，兼容32位，性能更高，新设备标配)
-          - armeabi-v7a (第7代ARM处理器，支持硬件浮点运算，主流设备采用)
-          
-          ### 安装说明
-          1. 下载对应架构的zip文件
-          2. 在Magisk或KernelSU中刷入
-          3. 重启设备生效
-          
-          ## 构建信息
-          - 触发方式: ${{ github.event_name }}
-          - 构建时间: ${{ steps.timestamp.outputs.BUILD_TIME }}
-          - 版本: ${{ steps.version.outputs.VERSION }}
-          - 版本代码: ${{ steps.version.outputs.VERSION_CODE }}
-          - 包含模块包: ${{ steps.artifact-count.outputs.count }}
+        files: artifacts/*.zip artifacts/changelog.md
+        body: ${{ needs.prepare-changelog.outputs.changelog_content }}
 
     - name: Cleanup old workflows
       uses: Mattraks/delete-workflow-runs@v2
