@@ -24,12 +24,12 @@ on:
           - basic
           - multi
       
-      # 第一个标题部分 - 精简为2个内容项
+      # 第一个标题部分 - 3个内容项
       custom_title_1:
         description: '第一个自定义标题 (支持Markdown格式)'
         required: false
         type: string
-        default: '### 🎉 新功能'
+        default: '### 🎉 新功能与改进'
       custom_content_1_1:
         description: '第一个标题下的内容项 1'
         required: false
@@ -40,13 +40,18 @@ on:
         required: false
         type: string
         default: '- 优化性能监控'
+      custom_content_1_3:
+        description: '第一个标题下的内容项 3'
+        required: false
+        type: string
+        default: '- 改进用户界面'
       
-      # 第二个标题部分 - 精简为2个内容项
+      # 第二个标题部分 - 3个内容项
       custom_title_2:
         description: '第二个自定义标题 (支持Markdown格式)'
         required: false
         type: string
-        default: '### 🐛 问题修复'
+        default: '### 🐛 问题修复与优化'
       custom_content_2_1:
         description: '第二个标题下的内容项 1'
         required: false
@@ -57,23 +62,11 @@ on:
         required: false
         type: string
         default: '- 修复崩溃问题'
-      
-      # 第三个标题部分 - 精简为2个内容项
-      custom_title_3:
-        description: '第三个自定义标题 (支持Markdown格式)'
+      custom_content_2_3:
+        description: '第二个标题下的内容项 3'
         required: false
         type: string
-        default: '### 🔧 技术改进'
-      custom_content_3_1:
-        description: '第三个标题下的内容项 1'
-        required: false
-        type: string
-        default: '- 更新构建工具链'
-      custom_content_3_2:
-        description: '第三个标题下的内容项 2'
-        required: false
-        type: string
-        default: '- 优化代码结构'
+        default: '- 优化稳定性'
 
 env:
   GO_VERSION: '1.21'
@@ -126,14 +119,12 @@ jobs:
           echo "${{ github.event.inputs.custom_title_1 }}"
           echo "${{ github.event.inputs.custom_content_1_1 }}"
           echo "${{ github.event.inputs.custom_content_1_2 }}"
+          echo "${{ github.event.inputs.custom_content_1_3 }}"
           echo ""
           echo "${{ github.event.inputs.custom_title_2 }}"
           echo "${{ github.event.inputs.custom_content_2_1 }}"
           echo "${{ github.event.inputs.custom_content_2_2 }}"
-          echo ""
-          echo "${{ github.event.inputs.custom_title_3 }}"
-          echo "${{ github.event.inputs.custom_content_3_1 }}"
-          echo "${{ github.event.inputs.custom_content_3_2 }}"
+          echo "${{ github.event.inputs.custom_content_2_3 }}"
           echo ""
           echo "## 📦 安装说明"
           echo "1. **下载模块**: 选择适合您设备架构的模块包"
