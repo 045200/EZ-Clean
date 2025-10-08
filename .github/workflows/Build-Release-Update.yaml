@@ -283,25 +283,25 @@ jobs:
             goarch: arm64
             cc: aarch64-linux-android24-clang
             module_type: basic
-            source_file: basic.go
+            source_file: main.go
             module_prop_dir: arm64
           - arch: arm
             goarch: arm
             cc: armv7a-linux-androideabi24-clang
             module_type: basic
-            source_file: basic.go
+            source_file: main.go
             module_prop_dir: arm
           - arch: arm64
             goarch: arm64
             cc: aarch64-linux-android24-clang
             module_type: multi
-            source_file: multi.go
+            source_file: ez.go
             module_prop_dir: arm64
           - arch: arm
             goarch: arm
             cc: armv7a-linux-androideabi24-clang
             module_type: multi
-            source_file: multi.go
+            source_file: ez.go
             module_prop_dir: arm
 
     steps:
@@ -350,11 +350,16 @@ jobs:
         # 创建目录
         mkdir -p build/${{ matrix.module_type }}-${{ matrix.arch }}
         
-        # Copy common files
-        cp -r META-INF whitelist.conf blacklist.conf MT.conf service.sh customize.sh reload.sh config.conf build/${{ matrix.module_type }}-${{ matrix.arch }}/
+        # 复制打包文件 - 从 /module/ 目录复制
+        cp -r module/META-INF module/whitelist.conf module/blacklist.conf module/MT.conf module/service.sh module/customize.sh module/reload.sh build/${{ matrix.module_type }}-${{ matrix.arch }}/
+        
+        # 复制二进制文件
         cp EZ build/${{ matrix.module_type }}-${{ matrix.arch }}/
         
-        # 复制预配置的 module.prop 文件 - 现在从主目录的 module/ 文件夹获取
+        # 复制对应模块类型的 config.conf
+        cp module/${{ matrix.module_type }}/config.conf build/${{ matrix.module_type }}-${{ matrix.arch }}/
+        
+        # 复制预配置的 module.prop 文件 - 从 module/ 文件夹获取
         cp module/${{ matrix.module_type }}/${{ matrix.module_prop_dir }}/module.prop build/${{ matrix.module_type }}-${{ matrix.arch }}/
         
         # 更新预配置的 module.prop 文件中的版本信息
@@ -365,6 +370,7 @@ jobs:
         echo "Version: ${{ needs.version-setup.outputs.version }}"
         echo "Version Code: ${{ needs.version-setup.outputs.version_code }}"
         echo "Module.prop source: module/${{ matrix.module_type }}/${{ matrix.module_prop_dir }}/module.prop"
+        echo "Config.conf source: module/${{ matrix.module_type }}/config.conf"
 
     - name: Package modules
       if: steps.check_build.outputs.should_build == 'true'
@@ -397,6 +403,10 @@ jobs:
           echo "📦 File size: $(du -h "$expected_zip" | cut -f1)"
           echo "🔍 File details:"
           ls -la "$expected_zip"
+          
+          # 验证zip文件内容
+          echo "📁 Zip file contents:"
+          unzip -l "$expected_zip" | head -20
         else
           echo "❌ Missing: $expected_zip"
           echo "📁 Current build directory contents:"
