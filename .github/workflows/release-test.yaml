@@ -26,37 +26,37 @@ on:
       
       # 第一个标题部分 - 2个内容项
       custom_title_1:
-        description: '第一个自定义标题 (支持Markdown格式)'
+        description: '第一个自定义标题 (支持Markdown格式，留空则跳过此部分)'
         required: false
         type: string
-        default: '### 🎉 新功能与改进'
+        default: ''
       custom_content_1_1:
-        description: '第一个标题下的内容项 1'
+        description: '第一个标题下的内容项 1 (留空则跳过)'
         required: false
         type: string
-        default: '- 新增系统清理功能'
+        default: ''
       custom_content_1_2:
-        description: '第一个标题下的内容项 2'
+        description: '第一个标题下的内容项 2 (留空则跳过)'
         required: false
         type: string
-        default: '- 优化性能监控'
+        default: ''
       
       # 第二个标题部分 - 2个内容项
       custom_title_2:
-        description: '第二个自定义标题 (支持Markdown格式)'
+        description: '第二个自定义标题 (支持Markdown格式，留空则跳过此部分)'
         required: false
         type: string
-        default: '### 🐛 问题修复与优化'
+        default: ''
       custom_content_2_1:
-        description: '第二个标题下的内容项 1'
+        description: '第二个标题下的内容项 1 (留空则跳过)'
         required: false
         type: string
-        default: '- 修复内存泄漏问题'
+        default: ''
       custom_content_2_2:
-        description: '第二个标题下的内容项 2'
+        description: '第二个标题下的内容项 2 (留空则跳过)'
         required: false
         type: string
-        default: '- 修复崩溃问题'
+        default: ''
 
 env:
   GO_VERSION: '1.21'
@@ -97,7 +97,7 @@ jobs:
     - name: Prepare fully customized changelog content
       id: prepare_changelog
       run: |
-        # 创建 changelog.md 文件 - 使用 echo 命令避免 heredoc 语法问题
+        # 创建 changelog.md 文件 - 使用动态内容生成
         {
           echo "# EZ-Clean ${{ needs.version-setup.outputs.version }} 更新日志"
           echo ""
@@ -106,14 +106,47 @@ jobs:
           echo "*版本代码: ${{ needs.version-setup.outputs.version_code }}*  "
           echo "*构建时间: ${{ steps.timestamp.outputs.BUILD_TIME }}*"
           echo ""
-          echo "${{ github.event.inputs.custom_title_1 }}"
-          echo "${{ github.event.inputs.custom_content_1_1 }}"
-          echo "${{ github.event.inputs.custom_content_1_2 }}"
-          echo ""
-          echo "${{ github.event.inputs.custom_title_2 }}"
-          echo "${{ github.event.inputs.custom_content_2_1 }}"
-          echo "${{ github.event.inputs.custom_content_2_2 }}"
-          echo ""
+          
+          # 第一个标题部分 - 只有在标题非空时才添加
+          if [ -n "${{ github.event.inputs.custom_title_1 }}" ]; then
+            echo "${{ github.event.inputs.custom_title_1 }}"
+            
+            # 添加第一个内容项（如果非空）
+            if [ -n "${{ github.event.inputs.custom_content_1_1 }}" ]; then
+              echo "${{ github.event.inputs.custom_content_1_1 }}"
+            fi
+            
+            # 添加第二个内容项（如果非空）
+            if [ -n "${{ github.event.inputs.custom_content_1_2 }}" ]; then
+              echo "${{ github.event.inputs.custom_content_1_2 }}"
+            fi
+            
+            echo ""
+          fi
+          
+          # 第二个标题部分 - 只有在标题非空时才添加
+          if [ -n "${{ github.event.inputs.custom_title_2 }}" ]; then
+            echo "${{ github.event.inputs.custom_title_2 }}"
+            
+            # 添加第一个内容项（如果非空）
+            if [ -n "${{ github.event.inputs.custom_content_2_1 }}" ]; then
+              echo "${{ github.event.inputs.custom_content_2_1 }}"
+            fi
+            
+            # 添加第二个内容项（如果非空）
+            if [ -n "${{ github.event.inputs.custom_content_2_2 }}" ]; then
+              echo "${{ github.event.inputs.custom_content_2_2 }}"
+            fi
+            
+            echo ""
+          fi
+          
+          # 检查是否有任何自定义内容被添加
+          if [ -z "${{ github.event.inputs.custom_title_1 }}" ] && [ -z "${{ github.event.inputs.custom_title_2 }}" ]; then
+            echo "> 本次更新未提供具体的更新内容说明。"
+            echo ""
+          fi
+          
           echo "## 📦 安装说明"
           echo "1. **下载模块**: 选择适合您设备架构的模块包"
           echo "2. **刷入模块**: 在 Magisk 或 KernelSU 中安装"
@@ -139,8 +172,8 @@ jobs:
         echo "EOF" >> $GITHUB_OUTPUT
 
         echo "✅ Fully customized changelog prepared successfully"
-        echo "📝 Changelog preview (first 15 lines):"
-        head -15 changelog.md
+        echo "📝 Changelog preview:"
+        cat changelog.md
 
     - name: Upload changelog artifact
       uses: actions/upload-artifact@v4
