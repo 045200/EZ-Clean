@@ -6,6 +6,10 @@
 
 EZ-Clean模块下载地址:[EZ-Clean](https://github.com/045200/EZ-Clean/releases)
 
+EZ-Clean源码维护:
+[Tools-cx-app](https://github.com/Tools-cx-app)
+感谢大佬的支持与帮助！
+
 ## 项目介绍
 EZ-Clean 是一款专为 **Root 后的 Android 设备**设计的智能清理工具，支持通过 **Magisk**（通用 Root 框架）和 **KernelSU**（内核级 Root 框架）以模块形式安装。  
 核心功能是自动清理设备冗余文件（如应用缓存、临时文件），同时通过 **系统资源感知** 和 **关键路径保护** 确保清理安全，避免误删系统文件或影响设备稳定性。  
