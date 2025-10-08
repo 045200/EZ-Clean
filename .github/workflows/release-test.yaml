@@ -392,24 +392,24 @@ jobs:
       TZ: Asia/Shanghai
 
     steps:
-    - name: Download all artifacts
+    - name: Download all build artifacts
       uses: actions/download-artifact@v4
       with:
         path: artifacts
         pattern: EZ-Clean-*
         merge-multiple: true
 
+    - name: Download changelog artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: changelog-${{ github.run_id }}-${{ github.run_attempt }}
+        path: artifacts
+
     - name: Download version info
       uses: actions/download-artifact@v4
       with:
         name: version-info-${{ github.run_id }}-${{ github.run_attempt }}
         path: version-info
-
-    - name: Download changelog
-      uses: actions/download-artifact@v4
-      with:
-        name: changelog-${{ github.run_id }}-${{ github.run_attempt }}
-        path: artifacts
 
     - name: Read version info
       id: version
@@ -427,18 +427,32 @@ jobs:
         echo "BUILD_TIME=$(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M:%S UTC%z')" >> $GITHUB_OUTPUT
         echo "BUILD_DATE=$(TZ='Asia/Shanghai' date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
 
-    - name: List downloaded artifacts
+    - name: Verify all artifacts are present
       run: |
-        echo "=== Downloaded artifacts structure ==="
-        find artifacts -type f | sort
-        echo "=== Artifacts directory listing ==="
-        ls -la artifacts/
-        echo "=== Artifact file details ==="
-        for file in artifacts/*; do
-          if [ -f "$file" ]; then
-            echo "📦 $(basename "$file"): $(du -h "$file" | cut -f1)"
-          fi
-        done
+        echo "=== Verifying all release artifacts ==="
+        echo "Expected artifacts:"
+        echo "1. EZ-Clean-basic-arm.zip"
+        echo "2. EZ-Clean-basic-arm64.zip"
+        echo "3. EZ-Clean-multi-arm.zip"
+        echo "4. EZ-Clean-multi-arm64.zip"
+        echo "5. changelog.md"
+        echo ""
+        echo "=== Actual artifacts ==="
+        find artifacts -type f -name "*.zip" -o -name "changelog.md" | sort
+        
+        echo ""
+        echo "=== Counting artifacts ==="
+        ZIP_COUNT=$(find artifacts -name "*.zip" -type f | wc -l)
+        CHANGELOG_COUNT=$(find artifacts -name "changelog.md" -type f | wc -l)
+        echo "ZIP files: $ZIP_COUNT"
+        echo "Changelog files: $CHANGELOG_COUNT"
+        
+        if [ $ZIP_COUNT -eq 4 ] && [ $CHANGELOG_COUNT -eq 1 ]; then
+          echo "✅ All artifacts are present"
+        else
+          echo "❌ Missing artifacts: expected 4 ZIP files and 1 changelog, found $ZIP_COUNT ZIP files and $CHANGELOG_COUNT changelog files"
+          exit 1
+        fi
 
     - name: Verify artifact integrity
       run: |
@@ -455,21 +469,18 @@ jobs:
           fi
         done
 
-    - name: Count artifacts
-      id: artifact-count
-      run: |
-        count=$(find artifacts -name "*.zip" -type f | wc -l)
-        changelog_count=$(find artifacts -name "changelog.md" -type f | wc -l)
-        echo "count=$count" >> $GITHUB_OUTPUT
-        echo "changelog_count=$changelog_count" >> $GITHUB_OUTPUT
-        echo "Found $count artifact files and $changelog_count changelog files"
-
     - name: Create Release
       if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
       uses: softprops/action-gh-release@v1
       with:
         tag_name: ${{ steps.version.outputs.VERSION }}
-        files: artifacts/*.zip artifacts/changelog.md
+        name: Release ${{ steps.version.outputs.VERSION }}
+        files: |
+          artifacts/EZ-Clean-basic-arm.zip
+          artifacts/EZ-Clean-basic-arm64.zip
+          artifacts/EZ-Clean-multi-arm.zip
+          artifacts/EZ-Clean-multi-arm64.zip
+          artifacts/changelog.md
         body: ${{ needs.prepare-changelog.outputs.changelog_content }}
 
     - name: Cleanup old workflows
