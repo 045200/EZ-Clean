@@ -8,7 +8,15 @@ EZ-Clean模块下载地址:[EZ-Clean](https://github.com/045200/EZ-Clean/release
 
 EZ-Clean源码维护:
 [Tools-cx-app](https://github.com/Tools-cx-app)
+
 感谢大佬的支持与帮助！
+
+版本说明:
+basic:
+基础循环清理、MT管理器检测清理、系统感知、系统动态清理
+
+multi:
+基础循环清理、MT管理器检测清理、系统告知、系统动态清理、系统健康报告、系统性能指标清晰、系统自适应
 
 ## 项目介绍
 EZ-Clean 是一款专为 **Root 后的 Android 设备**设计的智能清理工具，支持通过 **Magisk**（通用 Root 框架）和 **KernelSU**（内核级 Root 框架）以模块形式安装。  
@@ -41,7 +49,7 @@ EZ-Clean 是一款专为 **Root 后的 Android 设备**设计的智能清理工�
 
 
 ### 4. 灵活配置与日志管理
-- **自定义配置**：所有参数通过 `/storage/emulated/0/Android/EZ-Clean/config.json` 调整，无需修改程序本身，支持调整清理间隔、日志级别、资源阈值等（详见「配置详解」）。  
+- **自定义配置**：所有参数通过 `/storage/emulated/0/Android/EZ-Clean/config.conf` 调整，无需修改程序本身，支持调整清理间隔、日志级别、资源阈值等（详见「配置详解」）。  
 - **日志系统**：日志文件存储于 `/storage/emulated/0/Android/EZ-Clean/Clean.log`，支持自动压缩旧日志（`LogCompress=true`），可查看清理记录（删除文件数量、释放空间、执行时间）。  
 
 
