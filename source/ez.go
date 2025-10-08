@@ -1100,7 +1100,7 @@ func checkKernelSU() bool {
 		}
 	}
 	
-	return checkProcessRunning("ksud")
+	return false
 }
 
 func checkMagisk() bool {
