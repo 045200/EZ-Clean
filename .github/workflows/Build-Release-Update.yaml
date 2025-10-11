@@ -60,7 +60,6 @@ on:
 
 env:
   GO_VERSION: '1.21'
-  NDK_VERSION: 'r26b'
 
 jobs:
   version-setup:
@@ -281,27 +280,23 @@ jobs:
         include:
           - arch: arm64
             goarch: arm64
-            cc: aarch64-linux-android24-clang
             module_type: basic
-            source_file: main.go
+            source_file: basic.go
             module_prop_dir: arm64
           - arch: arm
             goarch: arm
-            cc: armv7a-linux-androideabi24-clang
             module_type: basic
-            source_file: main.go
+            source_file: basic.go
             module_prop_dir: arm
           - arch: arm64
             goarch: arm64
-            cc: aarch64-linux-android24-clang
             module_type: multi
-            source_file: ez.go
+            source_file: multi.go
             module_prop_dir: arm64
           - arch: arm
             goarch: arm
-            cc: armv7a-linux-androideabi24-clang
             module_type: multi
-            source_file: ez.go
+            source_file: multi.go
             module_prop_dir: arm
 
     steps:
@@ -313,13 +308,6 @@ jobs:
       with:
         go-version: ${{ env.GO_VERSION }}
         cache: true
-
-    - name: Set up Android NDK
-      run: |
-        wget -q https://dl.google.com/android/repository/android-ndk-${{ env.NDK_VERSION }}-linux.zip
-        unzip -q android-ndk-${{ env.NDK_VERSION }}-linux.zip
-        echo "NDK_HOME=$PWD/android-ndk-${{ env.NDK_VERSION }}" >> $GITHUB_ENV
-        echo "$PWD/android-ndk-${{ env.NDK_VERSION }}/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
 
     - name: Check build condition
       id: check_build
@@ -334,24 +322,34 @@ jobs:
           echo "should_build=true" >> $GITHUB_OUTPUT
         fi
 
-    - name: Build module
+    - name: Build Go binary
       if: steps.check_build.outputs.should_build == 'true'
       run: |
-        export GOOS=android
+        # 设置Go编译环境 - 使用Linux目标
+        export GOOS=linux
         export GOARCH=${{ matrix.goarch }}
-        export CC=${{ matrix.cc }}
-        export CGO_ENABLED=1
+        export CGO_ENABLED=0
+        
+        echo "Building for: GOOS=$GOOS, GOARCH=$GOARCH, CGO_ENABLED=$CGO_ENABLED"
         
         # Build Go binary
         cd source
         go build -ldflags="-s -w" -o ../EZ ${{ matrix.source_file }}
         cd ..
         
+        echo "✅ Go binary built successfully"
+        echo "📦 Binary info:"
+        file EZ
+        ls -lh EZ
+
+    - name: Prepare module files
+      if: steps.check_build.outputs.should_build == 'true'
+      run: |
         # 创建目录
         mkdir -p build/${{ matrix.module_type }}-${{ matrix.arch }}
         
         # 复制打包文件 - 从 /module/ 目录复制
-        cp -r module/META-INF module/whitelist.conf module/blacklist.conf module/MT.conf module/service.sh module/customize.sh module/reload.sh build/${{ matrix.module_type }}-${{ matrix.arch }}/
+        cp -r module/META-INF module/whitelist.conf module/blacklist.conf module/App.conf module/service.sh module/customize.sh module/reload.sh build/${{ matrix.module_type }}-${{ matrix.arch }}/
         
         # 复制二进制文件
         cp EZ build/${{ matrix.module_type }}-${{ matrix.arch }}/
@@ -366,11 +364,11 @@ jobs:
         sed -i "s|^version=.*|version=${{ needs.version-setup.outputs.version }}|" build/${{ matrix.module_type }}-${{ matrix.arch }}/module.prop
         sed -i "s|^versionCode=.*|versionCode=${{ needs.version-setup.outputs.version_code }}|" build/${{ matrix.module_type }}-${{ matrix.arch }}/module.prop
         
-        echo "Built ${{ matrix.module_type }} version for ${{ matrix.arch }}"
-        echo "Version: ${{ needs.version-setup.outputs.version }}"
-        echo "Version Code: ${{ needs.version-setup.outputs.version_code }}"
-        echo "Module.prop source: module/${{ matrix.module_type }}/${{ matrix.module_prop_dir }}/module.prop"
-        echo "Config.conf source: module/${{ matrix.module_type }}/config.conf"
+        echo "✅ Module files prepared for ${{ matrix.module_type }}-${{ matrix.arch }}"
+        echo "📝 Version: ${{ needs.version-setup.outputs.version }}"
+        echo "🔢 Version Code: ${{ needs.version-setup.outputs.version_code }}"
+        echo "📄 Module.prop source: module/${{ matrix.module_type }}/${{ matrix.module_prop_dir }}/module.prop"
+        echo "⚙️ Config.conf source: module/${{ matrix.module_type }}/config.conf"
 
     - name: Package modules
       if: steps.check_build.outputs.should_build == 'true'
@@ -381,13 +379,13 @@ jobs:
             dir_name=$(basename "${dir%/}")
             # 使用正确的zip名称格式
             zip_name="EZ-Clean-${dir_name}.zip"
-            echo "Packaging contents of $dir to $zip_name"
+            echo "📦 Packaging contents of $dir to $zip_name"
             
             cd "$dir_name"
             zip -r "../$zip_name" .
             cd ..
             
-            echo "Created: $zip_name"
+            echo "✅ Created: $zip_name"
           fi
         done
         echo "=== All built packages ==="

@@ -4,7 +4,7 @@
 MODDIR="${0%/*}"
 LOCK_FILE="$MODDIR/ez_service.pid"
 LOG_FILE="$MODDIR/logs/ez_service.log"  # 修正了这行的语法错误
-MAX_LOG_SIZE=$((5 * 1024 * 1024)) # 5MB
+MAX_LOG_SIZE=$((3 * 1024 * 1024)) # 3MB
 
 # 日志函数
 log_message() {
