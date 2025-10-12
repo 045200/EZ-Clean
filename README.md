@@ -6,56 +6,12 @@
 
 EZ-Clean模块下载地址:[EZ-Clean](https://github.com/045200/EZ-Clean/releases)
 
-EZ-Clean源码维护:
-[Tools-cx-app](https://github.com/Tools-cx-app)
-
-感谢大佬的支持与帮助！
-
-## 版本说明:
-
-## basic:
-基础循环清理、MT管理器检测清理、系统感知、系统动态清理
-
-## multi:
-基础循环清理、MT管理器检测清理、系统告知、系统动态清理、系统健康报告、系统性能指标清晰、系统自适应
-
-## PS:
-由于使用使用同一配置(config.conf)，所有功能存在差异。尽请谅解！
-
 ## 项目介绍
 EZ-Clean 是一款专为 **Root 后的 Android 设备**设计的智能清理工具，支持通过 **Magisk**（通用 Root 框架）和 **KernelSU**（内核级 Root 框架）以模块形式安装。  
-核心功能是自动清理设备冗余文件（如应用缓存、临时文件），同时通过 **系统资源感知** 和 **关键路径保护** 确保清理安全，避免误删系统文件或影响设备稳定性。  
+核心功能是自动清理设备冗余文件（如应用缓存、临时文件），同时通过**关键路径保护** 确保清理安全，避免误删系统文件或影响设备稳定性。  
 
 - **程序目录**：模块安装后，核心程序存储于 `/data/adb/modules/EZ-Clean/`（系统级模块目录，不可随意修改或删除）。  
 - **数据目录**：配置文件、日志、备份文件统一存储于 `/storage/emulated/0/Android/EZ-Clean/`（用户可访问目录，便于修改配置和查看日志）。  
-
-
-## 核心功能
-### 1. 智能清理触发方式
-- **常规定时清理**：按配置间隔（默认 24 小时）自动清理黑名单路径（如 `/data/data/*/cache`、`/storage/emulated/0/Android/data/*/code_cache`），间隔可通过 `config.json` 调整。  
-- **MT 管理器触发清理**：实时检测 MT 管理器进程（如 `bin.mt.plus`）或安装包，检测到后自动执行针对性清理（基于 `MT.conf` 配置，不过滤白名单）。  
-- **初始清理**：模块安装并重启后，自动执行一次常规清理，快速释放存储空间。  
-
-
-### 2. 系统资源感知保护
-清理行为会根据设备实时状态动态调整，避免占用过多资源导致卡顿：
-- **电池保护**：电量低于阈值（默认 20%）且未充电时，自动降低清理强度或暂停清理。  
-- **内存/CPU 控制**：内存占用 > 90% 或 CPU 负载 > 90% 时，进入「Critical 紧急状态」，暂停清理以保障设备流畅度；资源恢复后自动恢复。  
-- **动态并发调整**：根据系统状态（Optimal → Moderate → Conservative → Critical）自动调整清理线程数（如从 3 线程降至 1 线程）。  
-
-
-### 3. 安全防护机制
-- **关键路径保护**：默认排除 `/system`、`/vendor`、`/data/app` 等系统核心目录，且支持通过 `ExcludeSystem=true` 强化保护，防止误删导致系统异常。  
-- **黑白名单控制**：
-  - 黑名单（`blacklist.conf`）：定义需要清理的路径，支持通配符 `*`（如 `*cache*` 匹配所有含 cache 的路径）。  
-  - 白名单（`whitelist.conf`）：保护重要用户目录（如 `/storage/emulated/0/Download`、`/storage/emulated/0/DCIM`），优先级高于黑名单。  
-- **安全模式**：开启后（`SafeMode=true`）仅清理预设的安全路径，适合新手用户，避免误删自定义目录。  
-
-
-### 4. 灵活配置与日志管理
-- **自定义配置**：所有参数通过 `/storage/emulated/0/Android/EZ-Clean/config.conf` 调整，无需修改程序本身，支持调整清理间隔、日志级别、资源阈值等（详见「配置详解」）。  
-- **日志系统**：日志文件存储于 `/storage/emulated/0/Android/EZ-Clean/Clean.log`，支持自动压缩旧日志（`LogCompress=true`），可查看清理记录（删除文件数量、释放空间、执行时间）。  
-
 
 ## 支持环境
 | 框架类型       | 最低版本要求 | 安装方式                     |
@@ -92,67 +48,9 @@ EZ-Clean 是一款专为 **Root 后的 Android 设备**设计的智能清理工�
 ├── config.conf                      # 核心配置文件（可自定义参数）
 ├── blacklist.conf                   # 清理黑名单（定义需清理路径）
 ├── whitelist.conf                   # 保护白名单（定义不清理路径）
-├── MT.conf                          # MT 触发清理名单（针对性清理规则）
+├── App.conf                          # MT 触发清理名单（针对性清理规则）
 ├── Clean.log                        # 清理日志（记录执行过程与结果）
-└── backup/                          # 备份目录（启用备份时存储备份文件）
 ```
-
-
-## 配置详解
-所有可自定义的配置文件均存储于 **`/storage/emulated/0/Android/EZ-Clean/`**，可通过 MT 管理器、Termux 或 Root 文件浏览器编辑（推荐用 MT 管理器，支持语法高亮）。
-
-### 1. 核心配置（`config.conf`）
-| 参数名               | 类型    | 默认值       | 说明                                                                 |
-|----------------------|---------|--------------|----------------------------------------------------------------------|
-| `interval_min`       | int     | 1440         | 定时清理间隔（分钟），默认 24 小时（1440 分钟），可改为 60（1 小时）、300（5 小时）等。 |
-| `timed_cleaning`     | bool    | true         | 是否启用定时自动清理：`true` 启用，`false` 仅保留 MT 触发和初始清理。 |
-| `mt_cleaning`        | bool    | true         | 是否启用「MT 管理器触发清理」：`true` 检测到 MT 时自动清理，`false` 关闭。 |
-| `mt_packages`        | string  | `bin.mt.plus,bin.mt.plus9,bin.mt.plus.debug` | 需要触发清理的 MT 相关包名，多个包用英文逗号分隔，可自行添加。 |
-| `safe_mode`          | bool    | true         | 安全模式开关：`true` 仅清理预设安全路径，`false` 允许清理自定义黑名单（需谨慎）。 |
-| `battery_threshold`  | int     | 20           | 电池电量阈值（%）：低于此值且未充电时，降低清理强度。                |
-| `log_level`          | int     | 3            | 日志级别：0（仅错误）→ 1（基础信息）→ 2（详细信息）→ 3（调试信息）。 |
-| `max_concurrent`     | int     | 3            | 最大并发清理线程数：资源感知模式下会根据设备状态动态调整。           |
-| `log_compress`       | bool    | false        | 日志压缩开关：`true` 自动压缩 7 天前的日志（生成 `.log.gz`），节省空间。 |
-| `backup_enabled`     | bool    | false        | 备份开关：`true` 清理前备份文件至 `backup/` 目录，需确保存储空间充足。 |
-
-
-### 2. 黑白名单配置
-- **黑名单（`blacklist.conf`）**：定义需要清理的路径，每行一条规则，支持通配符 `*` 和注释（`#` 开头的行）。  
-  示例（默认规则）：
-  ```ini
-  # 应用缓存目录（常规清理重点）
-  /data/data/*/cache/*
-  /storage/emulated/0/Android/data/*/cache/*
-  /storage/emulated/0/Android/data/*/code_cache/*
-  # 系统临时文件目录
-  /data/local/tmp/*
-  /storage/emulated/0/tmp/*
-  ```
-
-- **白名单（`whitelist.conf`）**：定义需要保护的路径，匹配的路径不会被清理，优先级高于黑名单。  
-  示例（默认规则）：
-  ```ini
-  # 重要用户目录（照片、下载、文档）
-  /storage/emulated/0/Download/
-  /storage/emulated/0/DCIM/
-  /storage/emulated/0/Pictures/
-  /storage/emulated/0/Documents/
-  # 音乐与视频目录（避免误删媒体文件）
-  /storage/emulated/0/Music/
-  /storage/emulated/0/Movies/
-  ```
-
-- **MT 清理名单（`MT.conf`）**：仅当检测到 MT 管理器时生效，针对性清理 MT 相关冗余路径，不过滤白名单。  
-  示例：
-  ```ini
-  # MT 管理器临时文件
-  /storage/emulated/0/MT2/backup/tmp/*
-  /storage/emulated/0/MT2/temp/*
-  # 常见应用冗余路径
-  /storage/emulated/0/QQBrowser/tmp/*
-  /storage/emulated/0/com.tencent.mm/MicroMsg/*/cache/
-  ```
-
 
 ## 使用指南
 ### 1. 查看清理日志
@@ -167,15 +65,6 @@ EZ-Clean 是一款专为 **Root 后的 Android 设备**设计的智能清理工�
    ```bash
    cat /storage/emulated/0/Android/EZ-Clean/Clean.log
    ```
-
-### 2. 暂停/恢复清理
-#### 临时暂停清理
-1. 打开 `config.json`，将 `timed_cleaning` 和 `mt_cleaning` 均改为 `false`。  
-2. 保存文件后，模块会在下一次检测周期（约 30 秒）内暂停清理。
-
-#### 恢复自动清理
-1. 重新将 `timed_cleaning` 和 `mt_cleaning` 改回 `true`。  
-2. 保存文件，模块恢复定时和 MT 触发清理功能。
 
 
 ## 常见问题（FAQ）
