@@ -76,15 +76,13 @@ A1：
 
 ### Q2：清理后发现重要文件丢失？
 A3：
-1. 检查白名单配置：确认丢失文件的目录是否已加入 `whitelist.conf`，若未加入，补充后重新触发清理可避免后续误删。  
-2. 启用备份功能：编辑 `config.json`，将 `backup_enabled` 改为 `true`，模块会在清理前备份文件至 `/storage/emulated/0/Android/EZ-Clean/backup/`，可从中恢复误删文件。  
+1. 检查白名单配置：确认丢失文件的目录是否已加入 `whitelist.conf`，若未加入，补充后重新触发清理可避免后续误删。    
 3. 查看日志定位：通过 `Clean.log` 搜索丢失文件路径，确认是否被模块删除，若为误删且未备份，需通过数据恢复工具（如 DiskDigger）尝试恢复。
 
 
 ### Q3：日志文件过大，占用存储空间？
-A4：
-1. 开启日志压缩：编辑 `config.json`，将 `LogCompress` 改为 `true`，模块会自动压缩旧日志（生成 `.log.gz` 文件，体积仅为原日志的 10%-20%）。  
-2. 手动删除旧日志：通过 MT 管理器进入 `/storage/emulated/0/Android/EZ-Clean/`，删除 `Clean.log` 或过期的 `.log.gz` 文件（保留最新 1-2 个日志文件即可）。
+A4：  
+日志轮转：通过 MT 管理器进入 `/storage/emulated/0/Android/EZ-Clean/`，删除过期的 `.log.gz` 文件（默认保留三条）。
 
 
 ## 免责声明
@@ -100,5 +98,5 @@ A4：
 - 感谢deepseek/豆包/grok提供编程技术支持。
 
 ## 源码与更新
-- 源码地址：[GitHub Repository](https://github.com/045200/EZ-Clean)（替换为实际仓库地址）  
+- 源码地址：[GitHub Repository](https://github.com/045200/EZ-Clean)  
 - 更新渠道：GitHub Release 同步发布最新版本，支持 Magisk/KernelSU 双框架，建议定期查看日志确认更新内容。
