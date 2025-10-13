@@ -24,7 +24,7 @@ on:
           - basic
           - multi
       
-      # 第一个标题部分 - 2个内容项
+      # 自定义更新内容部分
       custom_title_1:
         description: '第一个自定义标题 (支持Markdown格式，留空则跳过此部分)'
         required: false
@@ -41,7 +41,6 @@ on:
         type: string
         default: ''
       
-      # 第二个标题部分 - 2个内容项
       custom_title_2:
         description: '第二个自定义标题 (支持Markdown格式，留空则跳过此部分)'
         required: false
@@ -106,16 +105,14 @@ jobs:
           echo "*构建时间: ${{ steps.timestamp.outputs.BUILD_TIME }}*"
           echo ""
           
-          # 第一个标题部分 - 只有在标题非空时才添加
+          # 第一个标题部分
           if [ -n "${{ github.event.inputs.custom_title_1 }}" ]; then
             echo "${{ github.event.inputs.custom_title_1 }}"
             
-            # 添加第一个内容项（如果非空）
             if [ -n "${{ github.event.inputs.custom_content_1_1 }}" ]; then
               echo "${{ github.event.inputs.custom_content_1_1 }}"
             fi
             
-            # 添加第二个内容项（如果非空）
             if [ -n "${{ github.event.inputs.custom_content_1_2 }}" ]; then
               echo "${{ github.event.inputs.custom_content_1_2 }}"
             fi
@@ -123,16 +120,14 @@ jobs:
             echo ""
           fi
           
-          # 第二个标题部分 - 只有在标题非空时才添加
+          # 第二个标题部分
           if [ -n "${{ github.event.inputs.custom_title_2 }}" ]; then
             echo "${{ github.event.inputs.custom_title_2 }}"
             
-            # 添加第一个内容项（如果非空）
             if [ -n "${{ github.event.inputs.custom_content_2_1 }}" ]; then
               echo "${{ github.event.inputs.custom_content_2_1 }}"
             fi
             
-            # 添加第二个内容项（如果非空）
             if [ -n "${{ github.event.inputs.custom_content_2_2 }}" ]; then
               echo "${{ github.event.inputs.custom_content_2_2 }}"
             fi
@@ -140,7 +135,7 @@ jobs:
             echo ""
           fi
           
-          # 检查是否有任何自定义内容被添加
+          # 如果没有自定义内容
           if [ -z "${{ github.event.inputs.custom_title_1 }}" ] && [ -z "${{ github.event.inputs.custom_title_2 }}" ]; then
             echo "> 本次更新未提供具体的更新内容说明。"
             echo ""
@@ -168,8 +163,6 @@ jobs:
         echo "EOF" >> $GITHUB_OUTPUT
 
         echo "✅ Fully customized changelog prepared successfully"
-        echo "📝 Changelog content (for Release body):"
-        echo "$CHANGELOG_CONTENT"
 
     - name: Upload changelog artifact
       uses: actions/upload-artifact@v4
@@ -177,29 +170,6 @@ jobs:
         name: changelog-${{ github.run_id }}-${{ github.run_attempt }}
         path: changelog.md
         retention-days: 1
-
-  upload-version-info:
-    runs-on: ubuntu-latest
-    needs: [version-setup, prepare-changelog]
-    steps:
-    - name: Save version info
-      run: |
-        echo "${{ needs.version-setup.outputs.version }}" > version.txt
-        echo "${{ needs.version-setup.outputs.version_code }}" > version_code.txt
-        echo "${{ needs.prepare-changelog.outputs.changelog_content }}" > changelog_content.txt
-      
-    - name: Upload version info
-      uses: actions/upload-artifact@v4
-      with:
-        name: version-info-${{ github.run_id }}-${{ github.run_attempt }}
-        path: |
-          version.txt
-          version_code.txt
-          changelog_content.txt
-        retention-days: 1
-        if-no-files-found: warn
-        compression-level: 6
-        overwrite: false
 
   update-all-json-files:
     runs-on: ubuntu-latest
@@ -214,12 +184,11 @@ jobs:
         token: ${{ secrets.GITHUB_TOKEN }}
         fetch-depth: 0
 
-    - name: Update all JSON files (compact format)
+    - name: Update all JSON files
       run: |
-        # 更新所有4个JSON文件，保持紧凑格式，使用正确的changelog链接
         echo "Updating all JSON files for version ${{ needs.version-setup.outputs.version }}"
         
-        # basic/arm.json - 使用 -c 选项保持紧凑格式
+        # 更新所有4个JSON文件
         jq -c --arg version "${{ needs.version-setup.outputs.version }}" \
            --arg versionCode "${{ needs.version-setup.outputs.version_code }}" \
            --arg zipUrl "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/EZ-Clean-basic-arm.zip" \
@@ -227,7 +196,6 @@ jobs:
            '.version = $version | .versionCode = ($versionCode | tonumber) | .zipUrl = $zipUrl | .changelog = $changelog' \
            basic/arm.json > temp1.json && mv temp1.json basic/arm.json
         
-        # basic/arm64.json
         jq -c --arg version "${{ needs.version-setup.outputs.version }}" \
            --arg versionCode "${{ needs.version-setup.outputs.version_code }}" \
            --arg zipUrl "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/EZ-Clean-basic-arm64.zip" \
@@ -235,7 +203,6 @@ jobs:
            '.version = $version | .versionCode = ($versionCode | tonumber) | .zipUrl = $zipUrl | .changelog = $changelog' \
            basic/arm64.json > temp2.json && mv temp2.json basic/arm64.json
         
-        # multi/arm.json
         jq -c --arg version "${{ needs.version-setup.outputs.version }}" \
            --arg versionCode "${{ needs.version-setup.outputs.version_code }}" \
            --arg zipUrl "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/EZ-Clean-multi-arm.zip" \
@@ -243,7 +210,6 @@ jobs:
            '.version = $version | .versionCode = ($versionCode | tonumber) | .zipUrl = $zipUrl | .changelog = $changelog' \
            multi/arm.json > temp3.json && mv temp3.json multi/arm.json
         
-        # multi/arm64.json
         jq -c --arg version "${{ needs.version-setup.outputs.version }}" \
            --arg versionCode "${{ needs.version-setup.outputs.version_code }}" \
            --arg zipUrl "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/EZ-Clean-multi-arm64.zip" \
@@ -251,18 +217,15 @@ jobs:
            '.version = $version | .versionCode = ($versionCode | tonumber) | .zipUrl = $zipUrl | .changelog = $changelog' \
            multi/arm64.json > temp4.json && mv temp4.json multi/arm64.json
         
-        echo "All JSON files updated successfully (compact format)"
-        echo "Changelog URL: https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/changelog.md"
+        echo "All JSON files updated successfully"
 
     - name: Commit and push all JSON files
       run: |
         git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
         git config --local user.name "github-actions[bot]"
         
-        # 添加所有更新的JSON文件
         git add basic/arm.json basic/arm64.json multi/arm.json multi/arm64.json
         
-        # 检查是否有变更
         if git diff --staged --quiet; then
           echo "No changes to commit"
         else
@@ -281,22 +244,22 @@ jobs:
           - arch: arm64
             goarch: arm64
             module_type: basic
-            source_file: basic.go
+            source_dir: basic
             module_prop_dir: arm64
           - arch: arm
             goarch: arm
             module_type: basic
-            source_file: basic.go
+            source_dir: basic
             module_prop_dir: arm
           - arch: arm64
             goarch: arm64
             module_type: multi
-            source_file: multi.go
+            source_dir: multi
             module_prop_dir: arm64
           - arch: arm
             goarch: arm
             module_type: multi
-            source_file: multi.go
+            source_dir: multi
             module_prop_dir: arm
 
     steps:
@@ -322,65 +285,101 @@ jobs:
           echo "should_build=true" >> $GITHUB_OUTPUT
         fi
 
-    - name: Build Go binary
+    - name: Initialize Go modules
       if: steps.check_build.outputs.should_build == 'true'
       run: |
-        # 设置Go编译环境 - 使用Linux目标
-        export GOOS=linux
+        echo "📦 Initializing Go modules..."
+        
+        # 检查是否已存在 go.mod
+        if [ ! -f "go.mod" ]; then
+          echo "Creating new go.mod file..."
+          go mod init ez-clean
+        else
+          echo "Using existing go.mod file"
+        fi
+        
+        # 下载依赖并生成 go.sum
+        echo "Downloading dependencies..."
+        go mod tidy
+        
+        # 验证依赖
+        go mod verify
+        
+        echo "✅ Go modules initialized successfully"
+        echo "📋 Current dependencies:"
+        go list -m all
+
+    - name: Build Go binary for Android
+      if: steps.check_build.outputs.should_build == 'true'
+      run: |
+        # 设置Go编译环境
+        export GOOS=android
         export GOARCH=${{ matrix.goarch }}
         export CGO_ENABLED=0
         
-        echo "Building for: GOOS=$GOOS, GOARCH=$GOARCH, CGO_ENABLED=$CGO_ENABLED"
+        echo "🚀 Building for Android:"
+        echo "  GOOS: $GOOS"
+        echo "  GOARCH: $GOARCH" 
+        echo "  CGO_ENABLED: $CGO_ENABLED"
+        echo "  Source Directory: ${{ matrix.source_dir }}"
         
-        # Build Go binary
-        cd source
-        go build -ldflags="-s -w" -o ../EZ ${{ matrix.source_file }}
-        cd ..
+        # 编译Go二进制文件 - 根据新的架构调整
+        go build -ldflags="-s -w -extldflags=-static" -o EZ-${{ matrix.module_type }} ./${{ matrix.source_dir }}
         
         echo "✅ Go binary built successfully"
-        echo "📦 Binary info:"
-        file EZ
-        ls -lh EZ
+        echo "📦 Binary details:"
+        file EZ-${{ matrix.module_type }}
+        ls -lh EZ-*
+        echo "🔍 Binary info:"
+        readelf -h EZ-${{ matrix.module_type }} 2>/dev/null || echo "Not an ELF binary"
 
     - name: Prepare module files
       if: steps.check_build.outputs.should_build == 'true'
       run: |
-        # 创建目录
+        # 创建模块目录
         mkdir -p build/${{ matrix.module_type }}-${{ matrix.arch }}
         
-        # 复制打包文件 - 从 /module/ 目录复制
-        cp -r module/META-INF module/whitelist.conf module/blacklist.conf module/App.conf module/service.sh module/customize.sh module/reload.sh build/${{ matrix.module_type }}-${{ matrix.arch }}/
+        echo "📁 Preparing module files for ${{ matrix.module_type }}-${{ matrix.arch }}"
         
-        # 复制二进制文件
-        cp EZ build/${{ matrix.module_type }}-${{ matrix.arch }}/
+        # 复制基础模块文件
+        cp -r module/META-INF build/${{ matrix.module_type }}-${{ matrix.arch }}/
+        cp module/whitelist.conf build/${{ matrix.module_type }}-${{ matrix.arch }}/
+        cp module/blacklist.conf build/${{ matrix.module_type }}-${{ matrix.arch }}/
+        cp module/App.conf build/${{ matrix.module_type }}-${{ matrix.arch }}/
+        cp module/service.sh build/${{ matrix.module_type }}-${{ matrix.arch }}/
+        cp module/customize.sh build/${{ matrix.module_type }}-${{ matrix.arch }}/
+        cp module/reload.sh build/${{ matrix.module_type }}-${{ matrix.arch }}/
         
-        # 复制对应模块类型的 config.conf
+        # 复制二进制文件 - 使用版本特定名称
+        cp EZ-${{ matrix.module_type }} build/${{ matrix.module_type }}-${{ matrix.arch }}/EZ
+        
+        # 复制对应模块类型的配置文件
         cp module/${{ matrix.module_type }}/config.conf build/${{ matrix.module_type }}-${{ matrix.arch }}/
         
-        # 复制预配置的 module.prop 文件 - 从 module/ 文件夹获取
+        # 复制并更新module.prop文件
         cp module/${{ matrix.module_type }}/${{ matrix.module_prop_dir }}/module.prop build/${{ matrix.module_type }}-${{ matrix.arch }}/
         
-        # 更新预配置的 module.prop 文件中的版本信息
+        # 更新版本信息
         sed -i "s|^version=.*|version=${{ needs.version-setup.outputs.version }}|" build/${{ matrix.module_type }}-${{ matrix.arch }}/module.prop
         sed -i "s|^versionCode=.*|versionCode=${{ needs.version-setup.outputs.version_code }}|" build/${{ matrix.module_type }}-${{ matrix.arch }}/module.prop
         
-        echo "✅ Module files prepared for ${{ matrix.module_type }}-${{ matrix.arch }}"
+        echo "✅ Module files prepared"
         echo "📝 Version: ${{ needs.version-setup.outputs.version }}"
         echo "🔢 Version Code: ${{ needs.version-setup.outputs.version_code }}"
-        echo "📄 Module.prop source: module/${{ matrix.module_type }}/${{ matrix.module_prop_dir }}/module.prop"
-        echo "⚙️ Config.conf source: module/${{ matrix.module_type }}/config.conf"
+        echo "📦 Binary: EZ-${{ matrix.module_type }} -> EZ"
 
     - name: Package modules
       if: steps.check_build.outputs.should_build == 'true'
       run: |
         cd build
+        echo "📦 Packaging modules..."
+        
         for dir in */; do
           if [ -d "$dir" ]; then
             dir_name=$(basename "${dir%/}")
-            # 使用正确的zip名称格式
             zip_name="EZ-Clean-${dir_name}.zip"
-            echo "📦 Packaging contents of $dir to $zip_name"
             
+            echo "Creating: $zip_name"
             cd "$dir_name"
             zip -r "../$zip_name" .
             cd ..
@@ -388,29 +387,31 @@ jobs:
             echo "✅ Created: $zip_name"
           fi
         done
-        echo "=== All built packages ==="
+        
+        echo "=== All packages ==="
         ls -la *.zip
 
-    - name: Debug - Verify artifacts
+    - name: Verify artifacts
       if: steps.check_build.outputs.should_build == 'true'
       run: |
-        echo "=== Verifying build artifacts ==="
+        echo "🔍 Verifying artifacts..."
         expected_zip="build/EZ-Clean-${{ matrix.module_type }}-${{ matrix.arch }}.zip"
+        
         if [ -f "$expected_zip" ]; then
           echo "✅ Found: $expected_zip"
-          echo "📦 File size: $(du -h "$expected_zip" | cut -f1)"
-          echo "🔍 File details:"
-          ls -la "$expected_zip"
+          echo "📊 Size: $(du -h "$expected_zip" | cut -f1)"
           
-          # 验证zip文件内容
-          echo "📁 Zip file contents:"
-          unzip -l "$expected_zip" | head -20
+          # 验证zip内容
+          echo "📁 Contents:"
+          unzip -l "$expected_zip" | head -10
+          
+          # 检查关键文件
+          echo "🔍 Essential files:"
+          unzip -l "$expected_zip" | grep -E "(EZ|module.prop|config.conf|service.sh)" || echo "Some files missing!"
+          
         else
           echo "❌ Missing: $expected_zip"
-          echo "📁 Current build directory contents:"
           ls -la build/
-          echo "🔍 All zip files in build directory:"
-          find build/ -name "*.zip" -type f
           exit 1
         fi
 
@@ -444,17 +445,11 @@ jobs:
         name: changelog-${{ github.run_id }}-${{ github.run_attempt }}
         path: artifacts
 
-    - name: Download version info
-      uses: actions/download-artifact@v4
-      with:
-        name: version-info-${{ github.run_id }}-${{ github.run_attempt }}
-        path: version-info
-
     - name: Read version info
       id: version
       run: |
-        VERSION=$(cat version-info/version.txt)
-        VERSION_CODE=$(cat version-info/version_code.txt)
+        VERSION="${{ needs.version-setup.outputs.version }}"
+        VERSION_CODE="${{ needs.version-setup.outputs.version_code }}"
         echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
         echo "VERSION_CODE=$VERSION_CODE" >> $GITHUB_OUTPUT
         echo "Using version: $VERSION"
@@ -466,49 +461,35 @@ jobs:
         echo "BUILD_TIME=$(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M:%S')" >> $GITHUB_OUTPUT
         echo "BUILD_DATE=$(TZ='Asia/Shanghai' date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
 
-    - name: Verify all artifacts are present
+    - name: Verify all artifacts
       run: |
-        echo "=== Verifying all release artifacts ==="
-        echo "Expected artifacts:"
-        echo "1. EZ-Clean-basic-arm.zip"
-        echo "2. EZ-Clean-basic-arm64.zip"
-        echo "3. EZ-Clean-multi-arm.zip"
-        echo "4. EZ-Clean-multi-arm64.zip"
-        echo "5. changelog.md"
-        echo ""
-        echo "=== Actual artifacts ==="
-        find artifacts -type f -name "*.zip" -o -name "changelog.md" | sort
+        echo "🔍 Verifying all release artifacts"
         
-        echo ""
-        echo "=== Counting artifacts ==="
         ZIP_COUNT=$(find artifacts -name "*.zip" -type f | wc -l)
         CHANGELOG_COUNT=$(find artifacts -name "changelog.md" -type f | wc -l)
-        echo "ZIP files: $ZIP_COUNT"
-        echo "Changelog files: $CHANGELOG_COUNT"
+        
+        echo "Found $ZIP_COUNT ZIP files and $CHANGELOG_COUNT changelog files"
         
         if [ $ZIP_COUNT -eq 4 ] && [ $CHANGELOG_COUNT -eq 1 ]; then
-          echo "✅ All artifacts are present"
+          echo "✅ All artifacts present"
+          
+          # 验证每个zip文件
+          for file in artifacts/*.zip; do
+            echo "Checking: $(basename "$file")"
+            if unzip -t "$file" > /dev/null 2>&1; then
+              echo "  ✅ Valid zip"
+            else
+              echo "  ❌ Corrupted zip"
+              exit 1
+            fi
+          done
         else
-          echo "❌ Missing artifacts: expected 4 ZIP files and 1 changelog, found $ZIP_COUNT ZIP files and $CHANGELOG_COUNT changelog files"
+          echo "❌ Missing artifacts"
+          find artifacts -type f | sort
           exit 1
         fi
 
-    - name: Verify artifact integrity
-      run: |
-        echo "=== Verifying artifact integrity ==="
-        for file in artifacts/*.zip; do
-          if [ -f "$file" ]; then
-            echo "🔍 Checking: $(basename "$file")"
-            if unzip -t "$file" > /dev/null 2>&1; then
-              echo "✅ $(basename "$file"): Valid zip file"
-            else
-              echo "❌ $(basename "$file"): Corrupted zip file"
-              exit 1
-            fi
-          fi
-        done
-
-    - name: Create Release with synchronized content
+    - name: Create Release
       if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
       uses: softprops/action-gh-release@v1
       with:
