@@ -1,25 +1,12 @@
 package core
 
 import (
-    "fmt"
     "log"
     "os"
-    "time"
     
     "gopkg.in/natefinch/lumberjack.v2"
     "ez-clean/pkg/constants"
 )
-
-// 自定义Writer实现本地时间戳
-type localTimeWriter struct {
-    logger *lumberjack.Logger
-}
-
-func (w *localTimeWriter) Write(p []byte) (n int, err error) {
-    localTime := time.Now().Format("2006/01/02 15:04:05")
-    logEntry := fmt.Sprintf("%s %s", localTime, string(p))
-    return w.logger.Write([]byte(logEntry))
-}
 
 // SetupLogger 初始化日志系统
 func SetupLogger(config *Config) (*log.Logger, error) {
@@ -35,8 +22,8 @@ func SetupLogger(config *Config) (*log.Logger, error) {
         Compress:   true,
     }
     
-    customWriter := &localTimeWriter{logger: lumberjackLogger}
-    logger := log.New(customWriter, "", 0)
+    // 直接使用 lumberjack.Logger，它会自动添加时间戳
+    logger := log.New(lumberjackLogger, "", log.LstdFlags)
     return logger, nil
 }
 
@@ -52,7 +39,7 @@ func LogMessage(logger *log.Logger, level int, message string, config *Config) {
         case 3:
             levelStr = "ERROR"
         }
-        logger.Printf("[%s] %s\n", levelStr, message)
+        logger.Printf("[%s] %s", levelStr, message)
     }
 }
 
