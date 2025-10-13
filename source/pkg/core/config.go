@@ -39,8 +39,8 @@ func ParseConfig() (*Config, error) {
         value := strings.TrimSpace(parts[1])
         
         switch key {
-        case "clean_interval":
-            config.CleanInterval, _ = strconv.Atoi(value)
+        case "clean_time":
+            config.CleanTime = value
         case "log_level":
             config.LogLevel, _ = strconv.Atoi(value)
         case "log_max_size":
@@ -62,8 +62,8 @@ func ParseConfig() (*Config, error) {
     }
     
     // 设置默认值
-    if config.CleanInterval == 0 {
-        config.CleanInterval = 60
+    if config.CleanTime == "" {
+        config.CleanTime = "02:00" // 默认凌晨2点
     }
     if config.LogLevel < 0 || config.LogLevel > 3 {
         config.LogLevel = 1

@@ -6,7 +6,6 @@ import (
     "log"
     "os"
     "path/filepath"
-    "strconv"
     "strings"
     "sync"
     "time"
@@ -31,27 +30,48 @@ func NewBasicCleaner(config *Config, logger *log.Logger) *BasicCleaner {
     }
 }
 
-// StartLoopCleaner 启动循环清理定时任务
+// StartLoopCleaner 启动循环清理定时任务（每天固定时间执行）
 func (b *BasicCleaner) StartLoopCleaner(ctx context.Context) {
     if !b.config.LoopCleanEnable {
         LogMessage(b.logger, 1, "循环清理已禁用", b.config)
         return
     }
     
-    interval := time.Duration(b.config.CleanInterval) * time.Minute
-    LogMessage(b.logger, 1, fmt.Sprintf("循环清理间隔: %v", interval), b.config)
+    // 解析清理时间
+    cleanTime, err := time.Parse("15:04", b.config.CleanTime)
+    if err != nil {
+        LogMessage(b.logger, 3, fmt.Sprintf("解析清理时间失败: %v，使用默认时间02:00", err), b.config)
+        cleanTime, _ = time.Parse("15:04", "02:00")
+    }
     
-    ticker := time.NewTicker(interval)
-    defer ticker.Stop()
+    LogMessage(b.logger, 1, fmt.Sprintf("循环清理时间: 每天 %s", cleanTime.Format("15:04")), b.config)
     
     // 立即执行一次清理
     go b.PerformLoopCleanup()
     
     for {
+        // 计算下一次清理的时间
+        now := time.Now()
+        nextClean := time.Date(now.Year(), now.Month(), now.Day(), 
+            cleanTime.Hour(), cleanTime.Minute(), 0, 0, now.Location())
+        
+        // 如果今天的时间已经过了，就安排到明天
+        if now.After(nextClean) {
+            nextClean = nextClean.Add(24 * time.Hour)
+        }
+        
+        durationUntilNextClean := nextClean.Sub(now)
+        
+        LogMessage(b.logger, 0, fmt.Sprintf("下一次清理将在 %v 后执行", durationUntilNextClean), b.config)
+        
+        timer := time.NewTimer(durationUntilNextClean)
+        
         select {
-        case <-ticker.C:
+        case <-timer.C:
+            // 执行清理任务
             go b.PerformLoopCleanup()
         case <-ctx.Done():
+            timer.Stop()
             LogMessage(b.logger, 1, "循环清理器已停止", b.config)
             return
         }

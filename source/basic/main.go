@@ -16,12 +16,12 @@ func main() {
         if os.IsNotExist(err) {
             log.Printf("配置文件不存在，使用默认配置")
             config = &core.Config{
-                CleanInterval:   60,
-                LogLevel:        1,
-                LogMaxSize:      10,
-                LogMaxAge:       7,
-                LoopCleanEnable: true,
-                AppCleanEnable:  true,
+                CleanTime:        "02:00", // 默认每天凌晨2点执行
+                LogLevel:         1,
+                LogMaxSize:       10,
+                LogMaxAge:        7,
+                LoopCleanEnable:  true,
+                AppCleanEnable:   true,
             }
             // 创建配置目录
             os.MkdirAll("/storage/emulated/0/Android/EZ-Clean/", 0755)
@@ -41,7 +41,7 @@ func main() {
     
     // 精简的INFO日志输出
     core.LogMessage(logger, 1, "EZ-Clean 基础版启动", config)
-    core.LogMessage(logger, 1, fmt.Sprintf("循环清理: %t (%d分钟)", config.LoopCleanEnable, config.CleanInterval), config)
+    core.LogMessage(logger, 1, fmt.Sprintf("循环清理: %t (%s)", config.LoopCleanEnable, config.CleanTime), config)
     core.LogMessage(logger, 1, fmt.Sprintf("App触发: %t (%d个App)", config.AppCleanEnable, len(config.AppPackages)), config)
     
     // 创建上下文用于优雅停止
