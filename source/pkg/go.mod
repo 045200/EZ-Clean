@@ -1,6 +1,6 @@
 module ez-clean
 
-go 1.21
+go 1.22
 
 require (
 	github.com/IGLOU-EU/go-wildcard v1.0.3
