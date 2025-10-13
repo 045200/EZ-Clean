@@ -285,10 +285,13 @@ jobs:
           echo "should_build=true" >> $GITHUB_OUTPUT
         fi
 
-    - name: Initialize Go modules
+    - name: Initialize Go modules in source directory
       if: steps.check_build.outputs.should_build == 'true'
       run: |
-        echo "📦 Initializing Go modules..."
+        echo "📦 Initializing Go modules in source directory..."
+        
+        # 切换到 source 目录
+        cd source
         
         # 检查是否已存在 go.mod
         if [ ! -f "go.mod" ]; then
@@ -321,10 +324,12 @@ jobs:
         echo "  GOOS: $GOOS"
         echo "  GOARCH: $GOARCH" 
         echo "  CGO_ENABLED: $CGO_ENABLED"
-        echo "  Source Directory: ${{ matrix.source_dir }}"
+        echo "  Source Directory: source/${{ matrix.source_dir }}"
         
-        # 编译Go二进制文件 - 根据新的架构调整
-        go build -ldflags="-s -w -extldflags=-static" -o EZ-${{ matrix.module_type }} ./${{ matrix.source_dir }}
+        # 编译Go二进制文件 - 从 source 目录下的对应子目录编译
+        cd source
+        go build -ldflags="-s -w -extldflags=-static" -o ../EZ-${{ matrix.module_type }} ./${{ matrix.source_dir }}
+        cd ..
         
         echo "✅ Go binary built successfully"
         echo "📦 Binary details:"
@@ -353,8 +358,14 @@ jobs:
         # 复制二进制文件 - 使用版本特定名称
         cp EZ-${{ matrix.module_type }} build/${{ matrix.module_type }}-${{ matrix.arch }}/EZ
         
-        # 复制对应模块类型的配置文件
-        cp module/${{ matrix.module_type }}/config.conf build/${{ matrix.module_type }}-${{ matrix.arch }}/
+        # 复制共享的 config.conf 文件
+        cp module/config.conf build/${{ matrix.module_type }}-${{ matrix.arch }}/
+        
+        # 对于 multi 类型，额外复制 multi_config.conf
+        if [[ "${{ matrix.module_type }}" == "multi" ]]; then
+          echo "📄 Copying multi_config.conf for multi module"
+          cp module/multi_config.conf build/${{ matrix.module_type }}-${{ matrix.arch }}/
+        fi
         
         # 复制并更新module.prop文件
         cp module/${{ matrix.module_type }}/${{ matrix.module_prop_dir }}/module.prop build/${{ matrix.module_type }}-${{ matrix.arch }}/
@@ -367,6 +378,10 @@ jobs:
         echo "📝 Version: ${{ needs.version-setup.outputs.version }}"
         echo "🔢 Version Code: ${{ needs.version-setup.outputs.version_code }}"
         echo "📦 Binary: EZ-${{ matrix.module_type }} -> EZ"
+        echo "📄 Config files: config.conf" 
+        if [[ "${{ matrix.module_type }}" == "multi" ]]; then
+          echo "📄 Additional config: multi_config.conf"
+        fi
 
     - name: Package modules
       if: steps.check_build.outputs.should_build == 'true'
@@ -408,6 +423,12 @@ jobs:
           # 检查关键文件
           echo "🔍 Essential files:"
           unzip -l "$expected_zip" | grep -E "(EZ|module.prop|config.conf|service.sh)" || echo "Some files missing!"
+          
+          # 对于 multi 类型，额外检查 multi_config.conf
+          if [[ "${{ matrix.module_type }}" == "multi" ]]; then
+            echo "🔍 Checking multi_config.conf for multi module:"
+            unzip -l "$expected_zip" | grep "multi_config.conf" || echo "multi_config.conf missing!"
+          fi
           
         else
           echo "❌ Missing: $expected_zip"
@@ -481,6 +502,20 @@ jobs:
             else
               echo "  ❌ Corrupted zip"
               exit 1
+            fi
+          done
+          
+          # 特别验证 multi 模块包含 multi_config.conf
+          echo "🔍 Verifying multi modules have multi_config.conf..."
+          for file in artifacts/EZ-Clean-multi-*.zip; do
+            if [ -f "$file" ]; then
+              echo "Checking multi_config.conf in: $(basename "$file")"
+              if unzip -l "$file" | grep -q "multi_config.conf"; then
+                echo "  ✅ multi_config.conf found"
+              else
+                echo "  ❌ multi_config.conf missing"
+                exit 1
+              fi
             fi
           done
         else
