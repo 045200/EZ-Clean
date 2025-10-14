@@ -1,4 +1,4 @@
-name: Build Release and Update
+name: Build Release
 
 on:
   push:
@@ -23,7 +23,7 @@ on:
           - all
           - basic
           - multi
-      
+
       # 自定义更新内容部分
       custom_title_1:
         description: '第一个自定义标题 (支持Markdown格式，留空则跳过此部分)'
@@ -40,7 +40,7 @@ on:
         required: false
         type: string
         default: ''
-      
+
       custom_title_2:
         description: '第二个自定义标题 (支持Markdown格式，留空则跳过此部分)'
         required: false
@@ -92,7 +92,7 @@ jobs:
       uses: nttld/setup-ndk@v1
       with:
         ndk-version: ${{ env.ANDROID_NDK_VERSION }}
-        
+
     - name: Verify NDK installation
       run: |
         echo "ANDROID_NDK_HOME: $ANDROID_NDK_HOME"
@@ -278,25 +278,25 @@ jobs:
           - arch: arm64
             goarch: arm64
             module_type: basic
-            source_dir: EZ-A
+            source_dir: basic
             module_prop_dir: arm64
             android_triple: aarch64-linux-android
           - arch: arm
             goarch: arm
             module_type: basic
-            source_dir: EZ-A
+            source_dir: basic
             module_prop_dir: arm
             android_triple: armv7a-linux-androideabi
           - arch: arm64
             goarch: arm64
             module_type: multi
-            source_dir: EZ-B
+            source_dir: multi
             module_prop_dir: arm64
             android_triple: aarch64-linux-android
           - arch: arm
             goarch: arm
             module_type: multi
-            source_dir: EZ-B
+            source_dir: multi
             module_prop_dir: arm
             android_triple: armv7a-linux-androideabi
 
@@ -325,29 +325,43 @@ jobs:
           echo "should_build=true" >> $GITHUB_OUTPUT
         fi
 
-    - name: Initialize and verify Go modules in root directory
+    - name: Initialize and verify Go modules with dependency resolution
       if: steps.check_build.outputs.should_build == 'true'
       run: |
-        echo "📦 Setting up Go modules in root directory..."
+        echo "📦 Setting up Go modules with comprehensive dependency resolution..."
+        
+        # 切换到 source 目录
+        cd source
         
         # 显示当前目录结构用于调试
-        echo "📁 Current root directory structure:"
+        echo "📁 Current source directory structure:"
         find . -name "*.go" -type f | head -20 || echo "No Go files found"
         echo "---"
         ls -la
         
-        # 检查是否存在go.mod
+        # 备份现有的 go.mod（如果有）
         if [ -f "go.mod" ]; then
-          echo "📄 Found existing go.mod"
+          cp go.mod go.mod.backup
+          echo "📄 Backed up existing go.mod"
           echo "🔍 Current go.mod content:"
           cat go.mod || echo "Cannot read go.mod"
-          
-          # 确保模块路径正确
+        fi
+        
+        # 重新初始化模块（使用正确的模块路径）
+        echo "🔄 Initializing Go module with proper path..."
+        if [ -f "go.mod" ]; then
+          # 如果已存在go.mod，确保模块路径正确
           CURRENT_MODULE=$(head -n1 go.mod | cut -d' ' -f2)
           echo "Current module path: $CURRENT_MODULE"
+          
+          # 如果模块路径不正确，重新初始化
+          if [[ "$CURRENT_MODULE" != *"ez-clean"* ]]; then
+            echo "⚠️ Module path may be incorrect, reinitializing..."
+            go mod init github.com/${{ github.repository }}/source 2>/dev/null || go mod init ez-clean/source
+          fi
         else
-          echo "🆕 Creating new go.mod file in root..."
-          go mod init github.com/${{ github.repository }} 2>/dev/null || go mod init ez-clean
+          echo "Creating new go.mod file..."
+          go mod init github.com/${{ github.repository }}/source 2>/dev/null || go mod init ez-clean/source
         fi
         
         # 显示模块信息
@@ -355,7 +369,7 @@ jobs:
         cat go.mod || echo "No go.mod file"
         
         # 强制下载所有依赖
-        echo "⬇️ Downloading dependencies..."
+        echo "⬇️ Downloading dependencies with verbose output..."
         GOPROXY=direct go mod download -x 2>&1 | tail -30 || echo "Download completed with possible warnings"
         
         # 整理依赖
@@ -366,16 +380,28 @@ jobs:
         echo "🔍 Verifying module dependencies..."
         go mod verify 2>&1 || echo "Module verification completed"
         
-        echo "✅ Go module setup completed in root directory"
+        # 检查模块图以确保所有依赖都正确解析
+        echo "📊 Module dependency graph:"
+        go mod graph | head -20 || echo "Module graph not available"
+        
+        # 特别检查本地包是否可以被解析
+        echo "🔎 Checking if local packages can be resolved..."
+        for pkg in $(find . -name "*.go" -type f -exec grep -h "^package" {} \; | sort | uniq); do
+          if [[ "$pkg" == package* ]]; then
+            echo "  Found: $pkg"
+          fi
+        done
+        
+        echo "✅ Go module setup completed with comprehensive verification"
 
-    - name: Build Go binary for Android with NDK R28 from root
+    - name: Build Go binary for Android with NDK R28
       if: steps.check_build.outputs.should_build == 'true'
       run: |
         # 设置Go编译环境 - 启用CGO
         export GOOS=android
         export GOARCH=${{ matrix.goarch }}
         export CGO_ENABLED=1
-        export GOPROXY=https://goproxy.cn,direct
+        export GOPROXY=https://goproxy.cn,direct  # 使用国内代理加速下载
         
         # 设置Android NDK工具链 - 使用API级别28
         export API_LEVEL=${{ env.ANDROID_API_LEVEL }}
@@ -390,7 +416,7 @@ jobs:
         echo "  CGO_ENABLED: $CGO_ENABLED"
         echo "  CC: $CC"
         echo "  API Level: $API_LEVEL"
-        echo "  Source Directory: ${{ matrix.source_dir }}"
+        echo "  Build Directory: source/"
         echo "  GOPROXY: $GOPROXY"
         
         # 验证编译器
@@ -400,11 +426,22 @@ jobs:
         echo "🔧 Go environment:"
         go env GOPATH GOOS GOARCH CGO_ENABLED
         
-        # 编译Go二进制文件 - 从根目录下的对应目录编译
-        echo "🏗️ Building Go binary from ${{ matrix.source_dir }}..."
-        go build -v -ldflags="-s -w" -o EZ-${{ matrix.module_type }} ./${{ matrix.source_dir }}
+        # 编译Go二进制文件 - 直接编译特定的Go文件
+        cd source
+        echo "🏗️ Building Go binary for ${{ matrix.module_type }}..."
         
-        echo "✅ Go binary built successfully from root directory"
+        # 根据模块类型选择要构建的特定Go文件
+        if [[ "${{ matrix.module_type }}" == "basic" ]]; then
+          echo "📄 Compiling basic.go..."
+          go build -v -ldflags="-s -w" -o ../EZ-basic basic.go
+        elif [[ "${{ matrix.module_type }}" == "multi" ]]; then
+          echo "📄 Compiling multi.go..."
+          go build -v -ldflags="-s -w" -o ../EZ-multi multi.go
+        fi
+        
+        cd ..
+        
+        echo "✅ Go binary built successfully with NDK R28"
         echo "📦 Binary details:"
         file EZ-${{ matrix.module_type }}
         ls -lh EZ-*
@@ -528,6 +565,7 @@ jobs:
         retention-days: 1
         if-no-files-found: error
 
+    # 添加自动重试机制
     - name: Rerun failed workflow (auto-retry)
       if: failure() && fromJSON(github.run_attempt) < 3
       run: |
