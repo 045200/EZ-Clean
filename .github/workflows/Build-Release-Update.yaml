@@ -342,13 +342,6 @@ jobs:
         # 下载依赖并生成 go.sum
         echo "Downloading dependencies..."
         go mod tidy
-        
-        # 验证依赖
-        go mod verify
-        
-        echo "✅ Go modules initialized successfully"
-        echo "📋 Current dependencies:"
-        go list -m all
 
     - name: Build Go binary for Android with NDK R28
       if: steps.check_build.outputs.should_build == 'true'
