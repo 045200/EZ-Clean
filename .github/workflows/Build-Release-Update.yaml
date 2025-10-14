@@ -1,4 +1,4 @@
-name: Build, Release and Update
+name: Build Release and Update
 
 on:
   push:
@@ -59,6 +59,8 @@ on:
 
 env:
   GO_VERSION: '1.22'
+  ANDROID_NDK_VERSION: '28.0.3'
+  ANDROID_API_LEVEL: '28'
 
 jobs:
   version-setup:
@@ -80,9 +82,27 @@ jobs:
         echo "Using version: ${{ steps.version.outputs.VERSION }}"
         echo "Using version code: ${{ steps.version.outputs.VERSION_CODE }}"
 
+  setup-android-ndk:
+    runs-on: ubuntu-latest
+    outputs:
+      ndk-home: ${{ steps.setup-ndk.outputs.ndk-home }}
+    steps:
+    - name: Setup Android NDK R28
+      id: setup-ndk
+      uses: nttld/setup-ndk@v1
+      with:
+        ndk-version: ${{ env.ANDROID_NDK_VERSION }}
+        
+    - name: Verify NDK installation
+      run: |
+        echo "ANDROID_NDK_HOME: $ANDROID_NDK_HOME"
+        echo "NDK toolchain contents:"
+        ls $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/*-clang | head -10
+        echo "✅ NDK R28 setup completed"
+
   prepare-changelog:
     runs-on: ubuntu-latest
-    needs: version-setup
+    needs: [version-setup, setup-android-ndk]
     outputs:
       changelog_content: ${{ steps.prepare_changelog.outputs.changelog_content }}
     steps:
@@ -103,6 +123,8 @@ jobs:
           echo "*版本: ${{ needs.version-setup.outputs.version }}*  "
           echo "*版本代码: ${{ needs.version-setup.outputs.version_code }}*  "
           echo "*构建时间: ${{ steps.timestamp.outputs.BUILD_TIME }}*"
+          echo "*最低支持: Android 9.0 (API 28)*"
+          echo "*构建工具: NDK R28 + Go ${{ env.GO_VERSION }}*"
           echo ""
           
           # 第一个标题部分
@@ -137,7 +159,10 @@ jobs:
           
           # 如果没有自定义内容
           if [ -z "${{ github.event.inputs.custom_title_1 }}" ] && [ -z "${{ github.event.inputs.custom_title_2 }}" ]; then
-            echo "> 本次更新未提供具体的更新内容说明。"
+            echo "## 🔧 技术更新"
+            echo "- ✅ 提升最低支持到 Android 9.0 (API 28)"
+            echo "- ✅ 使用 NDK R28 工具链构建"
+            echo "- ✅ 优化系统兼容性和稳定性"
             echo ""
           fi
           
@@ -147,9 +172,14 @@ jobs:
           echo "3. **重启设备**: 使模块生效"
           echo "4. **配置设置**: 根据需求调整模块配置"
           echo ""
+          echo "## ⚠️ 系统要求"
+          echo "- **最低 Android 版本**: 9.0 (API 28)"
+          echo "- **架构支持**: ARM, ARM64"
+          echo "- **ROOT 环境**: Magisk 或 KernelSU"
+          echo ""
           echo "## ⚠️ 注意事项"
           echo "- 💾 **备份数据**: 安装前请备份重要数据"
-          echo "- 📱 **兼容性**: 确保模块与您的设备和系统版本兼容"
+          echo "- 📱 **兼容性**: 确保设备运行 Android 9.0 或更高版本"
           echo "- 🔄 **更新建议**: 建议从旧版本升级时先卸载旧版再安装新版"
           echo "- ❓ **问题反馈**: 如遇问题请提交 Issue 并提供详细日志"
         } > changelog.md
@@ -162,7 +192,7 @@ jobs:
         echo "$CHANGELOG_CONTENT" >> $GITHUB_OUTPUT
         echo "EOF" >> $GITHUB_OUTPUT
 
-        echo "✅ Fully customized changelog prepared successfully"
+        echo "✅ Fully customized changelog prepared successfully with NDK R28 and API 28 info"
 
     - name: Upload changelog artifact
       uses: actions/upload-artifact@v4
@@ -184,40 +214,44 @@ jobs:
         token: ${{ secrets.GITHUB_TOKEN }}
         fetch-depth: 0
 
-    - name: Update all JSON files
+    - name: Update all JSON files with API 28 support
       run: |
-        echo "Updating all JSON files for version ${{ needs.version-setup.outputs.version }}"
+        echo "Updating all JSON files for version ${{ needs.version-setup.outputs.version }} with API 28"
         
-        # 更新所有4个JSON文件
+        # 更新所有4个JSON文件，添加minApi字段
         jq -c --arg version "${{ needs.version-setup.outputs.version }}" \
            --arg versionCode "${{ needs.version-setup.outputs.version_code }}" \
+           --arg minApi "${{ env.ANDROID_API_LEVEL }}" \
            --arg zipUrl "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/EZ-Clean-basic-arm.zip" \
            --arg changelog "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/changelog.md" \
-           '.version = $version | .versionCode = ($versionCode | tonumber) | .zipUrl = $zipUrl | .changelog = $changelog' \
+           '.version = $version | .versionCode = ($versionCode | tonumber) | .minApi = ($minApi | tonumber) | .zipUrl = $zipUrl | .changelog = $changelog' \
            basic/arm.json > temp1.json && mv temp1.json basic/arm.json
         
         jq -c --arg version "${{ needs.version-setup.outputs.version }}" \
            --arg versionCode "${{ needs.version-setup.outputs.version_code }}" \
+           --arg minApi "${{ env.ANDROID_API_LEVEL }}" \
            --arg zipUrl "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/EZ-Clean-basic-arm64.zip" \
            --arg changelog "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/changelog.md" \
-           '.version = $version | .versionCode = ($versionCode | tonumber) | .zipUrl = $zipUrl | .changelog = $changelog' \
+           '.version = $version | .versionCode = ($versionCode | tonumber) | .minApi = ($minApi | tonumber) | .zipUrl = $zipUrl | .changelog = $changelog' \
            basic/arm64.json > temp2.json && mv temp2.json basic/arm64.json
         
         jq -c --arg version "${{ needs.version-setup.outputs.version }}" \
            --arg versionCode "${{ needs.version-setup.outputs.version_code }}" \
+           --arg minApi "${{ env.ANDROID_API_LEVEL }}" \
            --arg zipUrl "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/EZ-Clean-multi-arm.zip" \
            --arg changelog "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/changelog.md" \
-           '.version = $version | .versionCode = ($versionCode | tonumber) | .zipUrl = $zipUrl | .changelog = $changelog' \
+           '.version = $version | .versionCode = ($versionCode | tonumber) | .minApi = ($minApi | tonumber) | .zipUrl = $zipUrl | .changelog = $changelog' \
            multi/arm.json > temp3.json && mv temp3.json multi/arm.json
         
         jq -c --arg version "${{ needs.version-setup.outputs.version }}" \
            --arg versionCode "${{ needs.version-setup.outputs.version_code }}" \
+           --arg minApi "${{ env.ANDROID_API_LEVEL }}" \
            --arg zipUrl "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/EZ-Clean-multi-arm64.zip" \
            --arg changelog "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/changelog.md" \
-           '.version = $version | .versionCode = ($versionCode | tonumber) | .zipUrl = $zipUrl | .changelog = $changelog' \
+           '.version = $version | .versionCode = ($versionCode | tonumber) | .minApi = ($minApi | tonumber) | .zipUrl = $zipUrl | .changelog = $changelog' \
            multi/arm64.json > temp4.json && mv temp4.json multi/arm64.json
         
-        echo "All JSON files updated successfully"
+        echo "All JSON files updated successfully with API 28 support"
 
     - name: Commit and push all JSON files
       run: |
@@ -229,15 +263,15 @@ jobs:
         if git diff --staged --quiet; then
           echo "No changes to commit"
         else
-          git commit -m "ci: update all JSON files for version ${{ needs.version-setup.outputs.version }}"
+          git commit -m "ci: update all JSON files for version ${{ needs.version-setup.outputs.version }} with API 28 support"
           git pull --rebase origin main
           git push origin main
-          echo "Successfully updated all JSON files"
+          echo "Successfully updated all JSON files with API 28 support"
         fi
 
   build:
     runs-on: ubuntu-latest
-    needs: [version-setup, prepare-changelog]
+    needs: [version-setup, setup-android-ndk, prepare-changelog]
     strategy:
       matrix:
         include:
@@ -246,21 +280,25 @@ jobs:
             module_type: basic
             source_dir: basic
             module_prop_dir: arm64
+            android_triple: aarch64-linux-android
           - arch: arm
             goarch: arm
             module_type: basic
             source_dir: basic
             module_prop_dir: arm
+            android_triple: armv7a-linux-androideabi
           - arch: arm64
             goarch: arm64
             module_type: multi
             source_dir: multi
             module_prop_dir: arm64
+            android_triple: aarch64-linux-android
           - arch: arm
             goarch: arm
             module_type: multi
             source_dir: multi
             module_prop_dir: arm
+            android_triple: armv7a-linux-androideabi
 
     steps:
     - name: Checkout repository
@@ -312,26 +350,38 @@ jobs:
         echo "📋 Current dependencies:"
         go list -m all
 
-    - name: Build Go binary for Android
+    - name: Build Go binary for Android with NDK R28
       if: steps.check_build.outputs.should_build == 'true'
       run: |
-        # 设置Go编译环境
+        # 设置Go编译环境 - 启用CGO
         export GOOS=android
         export GOARCH=${{ matrix.goarch }}
-        export CGO_ENABLED=0
+        export CGO_ENABLED=1
         
-        echo "🚀 Building for Android:"
+        # 设置Android NDK工具链 - 使用API级别28
+        export API_LEVEL=${{ env.ANDROID_API_LEVEL }}
+        
+        # 设置编译器路径
+        export CC=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.android_triple }}$API_LEVEL-clang
+        export CXX=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.android_triple }}$API_LEVEL-clang++
+        
+        echo "🚀 Building for Android with NDK R28 (API $API_LEVEL):"
         echo "  GOOS: $GOOS"
         echo "  GOARCH: $GOARCH" 
         echo "  CGO_ENABLED: $CGO_ENABLED"
+        echo "  CC: $CC"
+        echo "  API Level: $API_LEVEL"
         echo "  Source Directory: source/${{ matrix.source_dir }}"
+        
+        # 验证编译器
+        $CC --version || echo "Compiler check completed"
         
         # 编译Go二进制文件 - 从 source 目录下的对应子目录编译
         cd source
-        go build -ldflags="-s -w -extldflags=-static" -o ../EZ-${{ matrix.module_type }} ./${{ matrix.source_dir }}
+        go build -ldflags="-s -w" -o ../EZ-${{ matrix.module_type }} ./${{ matrix.source_dir }}
         cd ..
         
-        echo "✅ Go binary built successfully"
+        echo "✅ Go binary built successfully with NDK R28"
         echo "📦 Binary details:"
         file EZ-${{ matrix.module_type }}
         ls -lh EZ-*
@@ -374,7 +424,10 @@ jobs:
         sed -i "s|^version=.*|version=${{ needs.version-setup.outputs.version }}|" build/${{ matrix.module_type }}-${{ matrix.arch }}/module.prop
         sed -i "s|^versionCode=.*|versionCode=${{ needs.version-setup.outputs.version_code }}|" build/${{ matrix.module_type }}-${{ matrix.arch }}/module.prop
         
-        echo "✅ Module files prepared"
+        # 添加API级别信息到模块属性
+        echo "minApi=${{ env.ANDROID_API_LEVEL }}" >> build/${{ matrix.module_type }}-${{ matrix.arch }}/module.prop
+        
+        echo "✅ Module files prepared with API level ${{ env.ANDROID_API_LEVEL }}"
         echo "📝 Version: ${{ needs.version-setup.outputs.version }}"
         echo "🔢 Version Code: ${{ needs.version-setup.outputs.version_code }}"
         echo "📦 Binary: EZ-${{ matrix.module_type }} -> EZ"
@@ -424,6 +477,13 @@ jobs:
           echo "🔍 Essential files:"
           unzip -l "$expected_zip" | grep -E "(EZ|module.prop|config.conf|service.sh)" || echo "Some files missing!"
           
+          # 检查API级别信息
+          if unzip -p "$expected_zip" module.prop | grep -q "minApi=28"; then
+            echo "✅ API level 28 correctly set in module.prop"
+          else
+            echo "❌ API level not found in module.prop"
+          fi
+          
           # 对于 multi 类型，额外检查 multi_config.conf
           if [[ "${{ matrix.module_type }}" == "multi" ]]; then
             echo "🔍 Checking multi_config.conf for multi module:"
@@ -440,7 +500,7 @@ jobs:
       uses: actions/upload-artifact@v4
       if: steps.check_build.outputs.should_build == 'true'
       with:
-        name: EZ-Clean-${{ matrix.module_type }}-${{ matrix.arch }}
+        name: EZ-Clean-${{ matrix.module_type }}-${{ matrix.arch }}-api28
         path: build/EZ-Clean-${{ matrix.module_type }}-${{ matrix.arch }}.zip
         retention-days: 1
         if-no-files-found: error
@@ -484,7 +544,7 @@ jobs:
 
     - name: Verify all artifacts
       run: |
-        echo "🔍 Verifying all release artifacts"
+        echo "🔍 Verifying all release artifacts with API 28 support"
         
         ZIP_COUNT=$(find artifacts -name "*.zip" -type f | wc -l)
         CHANGELOG_COUNT=$(find artifacts -name "changelog.md" -type f | wc -l)
@@ -499,6 +559,13 @@ jobs:
             echo "Checking: $(basename "$file")"
             if unzip -t "$file" > /dev/null 2>&1; then
               echo "  ✅ Valid zip"
+              # 检查API级别信息
+              if unzip -p "$file" module.prop | grep -q "minApi=28"; then
+                echo "  ✅ API level 28 verified"
+              else
+                echo "  ❌ API level 28 missing"
+                exit 1
+              fi
             else
               echo "  ❌ Corrupted zip"
               exit 1
@@ -529,14 +596,22 @@ jobs:
       uses: softprops/action-gh-release@v1
       with:
         tag_name: ${{ steps.version.outputs.VERSION }}
-        name: Release ${{ steps.version.outputs.VERSION }}
+        name: Release ${{ steps.version.outputs.VERSION }} (API 28+)
         files: |
           artifacts/EZ-Clean-basic-arm.zip
           artifacts/EZ-Clean-basic-arm64.zip
           artifacts/EZ-Clean-multi-arm.zip
           artifacts/EZ-Clean-multi-arm64.zip
           artifacts/changelog.md
-        body: ${{ needs.prepare-changelog.outputs.changelog_content }}
+        body: |
+          ${{ needs.prepare-changelog.outputs.changelog_content }}
+          
+          ## 🛠 构建信息
+          - **NDK 版本**: R28 (${{ env.ANDROID_NDK_VERSION }})
+          - **最低 Android 版本**: 9.0 (API 28)
+          - **Go 版本**: ${{ env.GO_VERSION }}
+          - **架构支持**: ARM, ARM64
+          - **模块类型**: Basic, Multi
 
     - name: Cleanup old workflows
       uses: Mattraks/delete-workflow-runs@v2
