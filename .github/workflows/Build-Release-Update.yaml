@@ -59,7 +59,7 @@ on:
 
 env:
   GO_VERSION: '1.22'
-  ANDROID_NDK_VERSION: '28.0.3'
+  ANDROID_NDK_VERSION: 'r28b'
   ANDROID_API_LEVEL: '28'
 
 jobs:
