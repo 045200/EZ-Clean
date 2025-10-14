@@ -23,7 +23,7 @@ on:
           - all
           - basic
           - multi
-      
+
       # 自定义更新内容部分
       custom_title_1:
         description: '第一个自定义标题 (支持Markdown格式，留空则跳过此部分)'
@@ -40,7 +40,7 @@ on:
         required: false
         type: string
         default: ''
-      
+
       custom_title_2:
         description: '第二个自定义标题 (支持Markdown格式，留空则跳过此部分)'
         required: false
@@ -92,7 +92,7 @@ jobs:
       uses: nttld/setup-ndk@v1
       with:
         ndk-version: ${{ env.ANDROID_NDK_VERSION }}
-        
+
     - name: Verify NDK installation
       run: |
         echo "ANDROID_NDK_HOME: $ANDROID_NDK_HOME"
@@ -325,124 +325,80 @@ jobs:
           echo "should_build=true" >> $GITHUB_OUTPUT
         fi
 
-    - name: Debug Go environment and module state
+    - name: Debug project structure
       if: steps.check_build.outputs.should_build == 'true'
       run: |
-        echo "=== Go 环境变量 ==="
-        go env GO111MODULE GOPATH GOROOT
-        
         echo "=== 项目结构 ==="
         find . -name "*.go" -type f | head -20
+        echo "=== 目录结构 ==="
+        ls -la
+        echo "=== pkg 目录 ==="
+        find ./pkg -name "*.go" -type f | head -10 || echo "没有找到 pkg 目录"
         echo "=== go.mod 内容 ==="
         cat go.mod || echo "没有 go.mod 文件"
 
-    - name: Initialize and verify Go modules in root directory
+    - name: Setup Go module with explicit local path
       if: steps.check_build.outputs.should_build == 'true'
-      env:
-        GO111MODULE: on
       run: |
-        echo "📦 Setting up Go modules in root directory..."
+        echo "📦 设置 Go 模块..."
         
-        # 显示当前目录结构用于调试
-        echo "📁 Current root directory structure:"
-        find . -name "*.go" -type f | head -20 || echo "No Go files found"
-        echo "---"
-        ls -la
+        # 删除现有的 go.mod（如果有）
+        rm -f go.mod go.sum
         
-        # 确保使用 Go Modules
-        go env -w GO111MODULE=on
+        # 使用明确的本地路径初始化模块
+        go mod init local/ez-clean
         
-        # 检查并初始化 go.mod
-        if [ -f "go.mod" ]; then
-          echo "📄 Found existing go.mod"
-          echo "🔍 Current go.mod content:"
-          cat go.mod || echo "Cannot read go.mod"
-          
-          # 确保模块路径正确
-          CURRENT_MODULE=$(head -n1 go.mod | cut -d' ' -f2)
-          echo "Current module path: $CURRENT_MODULE"
-          
-          # 更新模块路径以确保正确
-          if [[ "$CURRENT_MODULE" != "github.com/${{ github.repository }}" ]]; then
-            echo "🔄 Updating module path to github.com/${{ github.repository }}"
-            go mod edit -module github.com/${{ github.repository }}
-          fi
-        else
-          echo "🆕 Creating new go.mod file in root..."
-          go mod init github.com/${{ github.repository }}
-        fi
+        # 添加 replace 指令，确保使用本地包
+        echo "replace ez-clean/pkg/core => ./pkg/core" >> go.mod
         
-        # 显示模块信息
-        echo "📋 Final module info:"
-        cat go.mod || echo "No go.mod file"
+        # 下载依赖
+        GOPROXY=https://goproxy.cn,direct go mod download
         
-        # 强制下载所有依赖
-        echo "⬇️ Downloading dependencies..."
-        GOPROXY=direct go mod download -x 2>&1 | tail -30 || echo "Download completed with possible warnings"
+        # 整理模块
+        GOPROXY=https://goproxy.cn,direct go mod tidy
         
-        # 整理依赖
-        echo "🔧 Tidying modules..."
-        go mod tidy -v 2>&1 | tail -20 || echo "Tidy completed"
-        
-        # 验证模块
-        echo "🔍 Verifying module dependencies..."
-        go mod verify 2>&1 || echo "Module verification completed"
-        
-        echo "✅ Go module setup completed in root directory"
+        echo "✅ 模块设置完成"
+        cat go.mod
 
-    - name: Build Go binary for Android with NDK R28 from root
+    - name: Build Go binary for Android
       if: steps.check_build.outputs.should_build == 'true'
       env:
         GO111MODULE: on
+        GOPROXY: https://goproxy.cn,direct
       run: |
-        # 设置Go编译环境 - 启用CGO
+        # 设置 Go 编译环境
         export GOOS=android
         export GOARCH=${{ matrix.goarch }}
         export CGO_ENABLED=1
         
-        # 设置Android NDK工具链 - 使用API级别28
+        # 设置 Android NDK 工具链
         export API_LEVEL=${{ env.ANDROID_API_LEVEL }}
-        
-        # 设置编译器路径
         export CC=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.android_triple }}$API_LEVEL-clang
-        export CXX=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.android_triple }}$API_LEVEL-clang++
         
-        echo "🚀 Building for Android with NDK R28 (API $API_LEVEL):"
-        echo "  GOOS: $GOOS"
-        echo "  GOARCH: $GOARCH" 
-        echo "  CGO_ENABLED: $CGO_ENABLED"
-        echo "  CC: $CC"
-        echo "  API Level: $API_LEVEL"
-        echo "  Source Directory: ${{ matrix.source_dir }}"
-        echo "  GO111MODULE: $GO111MODULE"
+        echo "🚀 构建 Android 二进制文件..."
+        echo "GOOS: $GOOS"
+        echo "GOARCH: $GOARCH"
+        echo "CC: $CC"
+        echo "源目录: ${{ matrix.source_dir }}"
         
         # 验证编译器
-        $CC --version || echo "Compiler check completed"
+        $CC --version || echo "编译器检查完成"
         
-        # 验证Go环境
-        echo "🔧 Go environment:"
-        go env GOPATH GOOS GOARCH CGO_ENABLED GO111MODULE
+        # 使用详细输出构建
+        go build -mod=mod -v -x -ldflags="-s -w" -o EZ-${{ matrix.module_type }} ./${{ matrix.source_dir }}
         
-        # 编译Go二进制文件 - 从根目录下的对应目录编译
-        echo "🏗️ Building Go binary from ${{ matrix.source_dir }}..."
-        go build -mod=mod -v -ldflags="-s -w" -o EZ-${{ matrix.module_type }} ./${{ matrix.source_dir }}
-        
-        echo "✅ Go binary built successfully from root directory"
-        echo "📦 Binary details:"
+        echo "✅ 构建成功"
         file EZ-${{ matrix.module_type }}
         ls -lh EZ-*
-        echo "🔍 Binary info:"
-        readelf -h EZ-${{ matrix.module_type }} 2>/dev/null || echo "Not an ELF binary"
 
     - name: Prepare module files
       if: steps.check_build.outputs.should_build == 'true'
       run: |
-        # 创建模块目录
         mkdir -p build/${{ matrix.module_type }}-${{ matrix.arch }}
         
-        echo "📁 Preparing module files for ${{ matrix.module_type }}-${{ matrix.arch }}"
+        echo "📁 准备模块文件..."
         
-        # 复制基础模块文件
+        # 复制基础文件
         cp -r module/META-INF build/${{ matrix.module_type }}-${{ matrix.arch }}/
         cp module/whitelist.conf build/${{ matrix.module_type }}-${{ matrix.arch }}/
         cp module/blacklist.conf build/${{ matrix.module_type }}-${{ matrix.arch }}/
@@ -451,59 +407,30 @@ jobs:
         cp module/customize.sh build/${{ matrix.module_type }}-${{ matrix.arch }}/
         cp module/reload.sh build/${{ matrix.module_type }}-${{ matrix.arch }}/
         
-        # 复制二进制文件 - 使用版本特定名称
+        # 复制二进制文件
         cp EZ-${{ matrix.module_type }} build/${{ matrix.module_type }}-${{ matrix.arch }}/EZ
-        
-        # 复制共享的 config.conf 文件
         cp module/config.conf build/${{ matrix.module_type }}-${{ matrix.arch }}/
         
-        # 对于 multi 类型，额外复制 multi_config.conf
+        # 对于 multi 类型，额外复制配置文件
         if [[ "${{ matrix.module_type }}" == "multi" ]]; then
-          echo "📄 Copying multi_config.conf for multi module"
           cp module/multi_config.conf build/${{ matrix.module_type }}-${{ matrix.arch }}/
         fi
         
-        # 复制并更新module.prop文件
-        cp module/${{ matrix.module_type }}/${{ matrix.module_prop_dir }}/module.prop build/${{ matrix.module_type }}-${{ matrix.arch }}/
+        # 复制并更新 module.prop
+        cp module/${{ matrix.module_type }}/${{ matrix.arch }}/module.prop build/${{ matrix.module_type }}-${{ matrix.arch }}/
         
         # 更新版本信息
         sed -i "s|^version=.*|version=${{ needs.version-setup.outputs.version }}|" build/${{ matrix.module_type }}-${{ matrix.arch }}/module.prop
         sed -i "s|^versionCode=.*|versionCode=${{ needs.version-setup.outputs.version_code }}|" build/${{ matrix.module_type }}-${{ matrix.arch }}/module.prop
-        
-        # 添加API级别信息到模块属性
         echo "minApi=${{ env.ANDROID_API_LEVEL }}" >> build/${{ matrix.module_type }}-${{ matrix.arch }}/module.prop
-        
-        echo "✅ Module files prepared with API level ${{ env.ANDROID_API_LEVEL }}"
-        echo "📝 Version: ${{ needs.version-setup.outputs.version }}"
-        echo "🔢 Version Code: ${{ needs.version-setup.outputs.version_code }}"
-        echo "📦 Binary: EZ-${{ matrix.module_type }} -> EZ"
-        echo "📄 Config files: config.conf" 
-        if [[ "${{ matrix.module_type }}" == "multi" ]]; then
-          echo "📄 Additional config: multi_config.conf"
-        fi
 
-    - name: Package modules
+    - name: Package module
       if: steps.check_build.outputs.should_build == 'true'
       run: |
-        cd build
-        echo "📦 Packaging modules..."
-        
-        for dir in */; do
-          if [ -d "$dir" ]; then
-            dir_name=$(basename "${dir%/}")
-            zip_name="EZ-Clean-${dir_name}.zip"
-            
-            echo "Creating: $zip_name"
-            cd "$dir_name"
-            zip -r "../$zip_name" .
-            cd ..
-            
-            echo "✅ Created: $zip_name"
-          fi
-        done
-        
-        echo "=== All packages ==="
-        ls -la *.zip
+        cd build/${{ matrix.module_type }}-${{ matrix.arch }}
+        zip -r ../EZ-Clean-${{ matrix.module_type }}-${{ matrix.arch }}.zip .
+        cd ../..
+        echo "✅ 打包完成: EZ-Clean-${{ matrix.module_type }}-${{ matrix.arch }}.zip"
 
     - name: Verify artifacts
       if: steps.check_build.outputs.should_build == 'true'
