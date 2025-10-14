@@ -325,8 +325,21 @@ jobs:
           echo "should_build=true" >> $GITHUB_OUTPUT
         fi
 
+    - name: Debug Go environment and module state
+      if: steps.check_build.outputs.should_build == 'true'
+      run: |
+        echo "=== Go 环境变量 ==="
+        go env GO111MODULE GOPATH GOROOT
+        
+        echo "=== 项目结构 ==="
+        find . -name "*.go" -type f | head -20
+        echo "=== go.mod 内容 ==="
+        cat go.mod || echo "没有 go.mod 文件"
+
     - name: Initialize and verify Go modules in root directory
       if: steps.check_build.outputs.should_build == 'true'
+      env:
+        GO111MODULE: on
       run: |
         echo "📦 Setting up Go modules in root directory..."
         
@@ -336,7 +349,10 @@ jobs:
         echo "---"
         ls -la
         
-        # 检查是否存在go.mod
+        # 确保使用 Go Modules
+        go env -w GO111MODULE=on
+        
+        # 检查并初始化 go.mod
         if [ -f "go.mod" ]; then
           echo "📄 Found existing go.mod"
           echo "🔍 Current go.mod content:"
@@ -345,9 +361,15 @@ jobs:
           # 确保模块路径正确
           CURRENT_MODULE=$(head -n1 go.mod | cut -d' ' -f2)
           echo "Current module path: $CURRENT_MODULE"
+          
+          # 更新模块路径以确保正确
+          if [[ "$CURRENT_MODULE" != "github.com/${{ github.repository }}" ]]; then
+            echo "🔄 Updating module path to github.com/${{ github.repository }}"
+            go mod edit -module github.com/${{ github.repository }}
+          fi
         else
           echo "🆕 Creating new go.mod file in root..."
-          go mod init github.com/${{ github.repository }} 2>/dev/null || go mod init ez-clean
+          go mod init github.com/${{ github.repository }}
         fi
         
         # 显示模块信息
@@ -370,12 +392,13 @@ jobs:
 
     - name: Build Go binary for Android with NDK R28 from root
       if: steps.check_build.outputs.should_build == 'true'
+      env:
+        GO111MODULE: on
       run: |
         # 设置Go编译环境 - 启用CGO
         export GOOS=android
         export GOARCH=${{ matrix.goarch }}
         export CGO_ENABLED=1
-        export GOPROXY=https://goproxy.cn,direct
         
         # 设置Android NDK工具链 - 使用API级别28
         export API_LEVEL=${{ env.ANDROID_API_LEVEL }}
@@ -391,18 +414,18 @@ jobs:
         echo "  CC: $CC"
         echo "  API Level: $API_LEVEL"
         echo "  Source Directory: ${{ matrix.source_dir }}"
-        echo "  GOPROXY: $GOPROXY"
+        echo "  GO111MODULE: $GO111MODULE"
         
         # 验证编译器
         $CC --version || echo "Compiler check completed"
         
         # 验证Go环境
         echo "🔧 Go environment:"
-        go env GOPATH GOOS GOARCH CGO_ENABLED
+        go env GOPATH GOOS GOARCH CGO_ENABLED GO111MODULE
         
         # 编译Go二进制文件 - 从根目录下的对应目录编译
         echo "🏗️ Building Go binary from ${{ matrix.source_dir }}..."
-        go build -v -ldflags="-s -w" -o EZ-${{ matrix.module_type }} ./${{ matrix.source_dir }}
+        go build -mod=mod -v -ldflags="-s -w" -o EZ-${{ matrix.module_type }} ./${{ matrix.source_dir }}
         
         echo "✅ Go binary built successfully from root directory"
         echo "📦 Binary details:"
