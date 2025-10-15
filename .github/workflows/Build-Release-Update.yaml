@@ -325,46 +325,17 @@ jobs:
           echo "should_build=true" >> $GITHUB_OUTPUT
         fi
 
-    - name: Debug project structure
+    - name: Setup Go dependencies
       if: steps.check_build.outputs.should_build == 'true'
       run: |
-        echo "=== 项目结构 ==="
-        find . -name "*.go" -type f | head -20
-        echo "=== 目录结构 ==="
-        ls -la
-        echo "=== pkg 目录 ==="
-        find ./pkg -name "*.go" -type f | head -10 || echo "没有找到 pkg 目录"
-        echo "=== go.mod 内容 ==="
-        cat go.mod || echo "没有 go.mod 文件"
-
-    - name: Setup Go module with explicit local path
-      if: steps.check_build.outputs.should_build == 'true'
-      run: |
-        echo "📦 设置 Go 模块..."
-        
-        # 删除现有的 go.mod（如果有）
-        rm -f go.mod go.sum
-        
-        # 使用明确的本地路径初始化模块
-        go mod init local/ez-clean
-        
-        # 添加 replace 指令，确保使用本地包
-        echo "replace ez-clean/pkg/core => ./pkg/core" >> go.mod
-        
-        # 下载依赖
-        GOPROXY=https://goproxy.cn,direct go mod download
-        
-        # 整理模块
-        GOPROXY=https://goproxy.cn,direct go mod tidy
-        
-        echo "✅ 模块设置完成"
-        cat go.mod
+        echo "📦 整理 Go 模块依赖..."
+        go mod tidy
+        echo "✅ 依赖整理完成"
 
     - name: Build Go binary for Android
       if: steps.check_build.outputs.should_build == 'true'
       env:
         GO111MODULE: on
-        GOPROXY: https://goproxy.cn,direct
       run: |
         # 设置 Go 编译环境
         export GOOS=android
