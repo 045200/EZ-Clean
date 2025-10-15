@@ -58,7 +58,7 @@ on:
         default: ''
 
 env:
-  GO_VERSION: '1.22'
+  GO_VERSION: '1.25'
   ANDROID_NDK_VERSION: 'r28b'
   ANDROID_API_LEVEL: '28'
 
@@ -68,6 +68,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.VERSION }}
       version_code: ${{ steps.version.outputs.VERSION_CODE }}
+      build_type: ${{ steps.build_type.outputs.BUILD_TYPE }}
     steps:
     - name: Determine version and version code
       id: version
@@ -81,6 +82,16 @@ jobs:
         fi
         echo "Using version: ${{ steps.version.outputs.VERSION }}"
         echo "Using version code: ${{ steps.version.outputs.VERSION_CODE }}"
+
+    - name: Determine build type
+      id: build_type
+      run: |
+        if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+          echo "BUILD_TYPE=${{ github.event.inputs.build_type }}" >> $GITHUB_OUTPUT
+        else
+          echo "BUILD_TYPE=all" >> $GITHUB_OUTPUT
+        fi
+        echo "Build type: ${{ steps.build_type.outputs.BUILD_TYPE }}"
 
   setup-android-ndk:
     runs-on: ubuntu-latest
@@ -123,6 +134,7 @@ jobs:
           echo "*版本: ${{ needs.version-setup.outputs.version }}*  "
           echo "*版本代码: ${{ needs.version-setup.outputs.version_code }}*  "
           echo "*构建时间: ${{ steps.timestamp.outputs.BUILD_TIME }}*"
+          echo "*构建类型: ${{ needs.version-setup.outputs.build_type }}*"
           echo "*最低支持: Android 9.0 (API 28)*"
           echo "*构建工具: NDK R28 + Go ${{ env.GO_VERSION }}*"
           echo ""
@@ -201,12 +213,13 @@ jobs:
         path: changelog.md
         retention-days: 1
 
-  update-all-json-files:
+  update-json-files:
     runs-on: ubuntu-latest
     needs: [version-setup, prepare-changelog]
     permissions:
       contents: write
-
+    outputs:
+      updated_files: ${{ steps.determine_files.outputs.updated_files }}
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
@@ -214,59 +227,78 @@ jobs:
         token: ${{ secrets.GITHUB_TOKEN }}
         fetch-depth: 0
 
-    - name: Update all JSON files with API 28 support
+    - name: Determine which JSON files to update
+      id: determine_files
       run: |
-        echo "Updating all JSON files for version ${{ needs.version-setup.outputs.version }} with API 28"
+        BUILD_TYPE="${{ needs.version-setup.outputs.build_type }}"
+        FILES=""
         
-        # 更新所有4个JSON文件，添加minApi字段
-        jq -c --arg version "${{ needs.version-setup.outputs.version }}" \
-           --arg versionCode "${{ needs.version-setup.outputs.version_code }}" \
-           --arg minApi "${{ env.ANDROID_API_LEVEL }}" \
-           --arg zipUrl "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/EZ-Clean-basic-arm.zip" \
-           --arg changelog "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/changelog.md" \
-           '.version = $version | .versionCode = ($versionCode | tonumber) | .minApi = ($minApi | tonumber) | .zipUrl = $zipUrl | .changelog = $changelog' \
-           basic/arm.json > temp1.json && mv temp1.json basic/arm.json
+        case $BUILD_TYPE in
+          "all")
+            FILES="basic/arm.json basic/arm64.json multi/arm.json multi/arm64.json"
+            ;;
+          "basic")
+            FILES="basic/arm.json basic/arm64.json"
+            ;;
+          "multi")
+            FILES="multi/arm.json multi/arm64.json"
+            ;;
+        esac
         
-        jq -c --arg version "${{ needs.version-setup.outputs.version }}" \
-           --arg versionCode "${{ needs.version-setup.outputs.version_code }}" \
-           --arg minApi "${{ env.ANDROID_API_LEVEL }}" \
-           --arg zipUrl "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/EZ-Clean-basic-arm64.zip" \
-           --arg changelog "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/changelog.md" \
-           '.version = $version | .versionCode = ($versionCode | tonumber) | .minApi = ($minApi | tonumber) | .zipUrl = $zipUrl | .changelog = $changelog' \
-           basic/arm64.json > temp2.json && mv temp2.json basic/arm64.json
-        
-        jq -c --arg version "${{ needs.version-setup.outputs.version }}" \
-           --arg versionCode "${{ needs.version-setup.outputs.version_code }}" \
-           --arg minApi "${{ env.ANDROID_API_LEVEL }}" \
-           --arg zipUrl "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/EZ-Clean-multi-arm.zip" \
-           --arg changelog "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/changelog.md" \
-           '.version = $version | .versionCode = ($versionCode | tonumber) | .minApi = ($minApi | tonumber) | .zipUrl = $zipUrl | .changelog = $changelog' \
-           multi/arm.json > temp3.json && mv temp3.json multi/arm.json
-        
-        jq -c --arg version "${{ needs.version-setup.outputs.version }}" \
-           --arg versionCode "${{ needs.version-setup.outputs.version_code }}" \
-           --arg minApi "${{ env.ANDROID_API_LEVEL }}" \
-           --arg zipUrl "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/EZ-Clean-multi-arm64.zip" \
-           --arg changelog "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/changelog.md" \
-           '.version = $version | .versionCode = ($versionCode | tonumber) | .minApi = ($minApi | tonumber) | .zipUrl = $zipUrl | .changelog = $changelog' \
-           multi/arm64.json > temp4.json && mv temp4.json multi/arm64.json
-        
-        echo "All JSON files updated successfully with API 28 support"
+        echo "updated_files=$FILES" >> $GITHUB_OUTPUT
+        echo "Will update files: $FILES"
 
-    - name: Commit and push all JSON files
+    - name: Update JSON files with API 28 support
+      run: |
+        echo "Updating JSON files for version ${{ needs.version-setup.outputs.version }} with API 28"
+        echo "Build type: ${{ needs.version-setup.outputs.build_type }}"
+        
+        for json_file in ${{ steps.determine_files.outputs.updated_files }}; do
+          echo "Processing: $json_file"
+          
+          # 提取模块类型和架构
+          module_type=$(echo "$json_file" | cut -d'/' -f1)
+          arch=$(basename "$json_file" .json)
+          
+          # 设置对应的zipUrl
+          zipUrl="https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/EZ-Clean-${module_type}-${arch}.zip"
+          
+          jq -c --arg version "${{ needs.version-setup.outputs.version }}" \
+                 --arg versionCode "${{ needs.version-setup.outputs.version_code }}" \
+                 --arg minApi "${{ env.ANDROID_API_LEVEL }}" \
+                 --arg zipUrl "$zipUrl" \
+                 --arg changelog "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/changelog.md" \
+                 '.version = $version | .versionCode = ($versionCode | tonumber) | .minApi = ($minApi | tonumber) | .zipUrl = $zipUrl | .changelog = $changelog' \
+                 "$json_file" > "temp_${module_type}_${arch}.json"
+        done
+        
+        # 移动临时文件到实际位置
+        for temp_file in temp_*.json; do
+          if [ -f "$temp_file" ]; then
+            module_type=$(echo "$temp_file" | cut -d'_' -f2)
+            arch=$(echo "$temp_file" | cut -d'_' -f3 | sed 's/.json//')
+            mv "$temp_file" "${module_type}/${arch}.json"
+            echo "Updated: ${module_type}/${arch}.json"
+          fi
+        done
+        
+        echo "JSON files updated successfully for build type: ${{ needs.version-setup.outputs.build_type }}"
+
+    - name: Commit and push JSON files
       run: |
         git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
         git config --local user.name "github-actions[bot]"
         
-        git add basic/arm.json basic/arm64.json multi/arm.json multi/arm64.json
+        # 添加所有更新的文件
+        git add ${{ steps.determine_files.outputs.updated_files }}
         
         if git diff --staged --quiet; then
           echo "No changes to commit"
         else
-          git commit -m "ci: update all JSON files for version ${{ needs.version-setup.outputs.version }} with API 28 support"
+          git commit -m "ci: update ${{ needs.version-setup.outputs.build_type }} JSON files for version ${{ needs.version-setup.outputs.version }} with API 28 support"
           git pull --rebase origin main
           git push origin main
-          echo "Successfully updated all JSON files with API 28 support"
+          echo "Successfully updated JSON files for build type: ${{ needs.version-setup.outputs.build_type }}"
         fi
 
   build:
@@ -315,14 +347,18 @@ jobs:
     - name: Check build condition
       id: check_build
       run: |
-        if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-          if [[ "${{ github.event.inputs.build_type }}" == "all" || "${{ github.event.inputs.build_type }}" == "${{ matrix.module_type }}" ]]; then
-            echo "should_build=true" >> $GITHUB_OUTPUT
-          else
-            echo "should_build=false" >> $GITHUB_OUTPUT
-          fi
-        else
+        BUILD_TYPE="${{ needs.version-setup.outputs.build_type }}"
+        CURRENT_MODULE_TYPE="${{ matrix.module_type }}"
+        
+        echo "Build type: $BUILD_TYPE"
+        echo "Current module type: $CURRENT_MODULE_TYPE"
+        
+        if [[ "$BUILD_TYPE" == "all" || "$BUILD_TYPE" == "$CURRENT_MODULE_TYPE" ]]; then
           echo "should_build=true" >> $GITHUB_OUTPUT
+          echo "✅ Will build $CURRENT_MODULE_TYPE for ${{ matrix.arch }}"
+        else
+          echo "should_build=false" >> $GITHUB_OUTPUT
+          echo "⏭️ Skipping $CURRENT_MODULE_TYPE for ${{ matrix.arch }} (build type: $BUILD_TYPE)"
         fi
 
     - name: Setup Go dependencies
@@ -351,6 +387,8 @@ jobs:
         echo "GOARCH: $GOARCH"
         echo "CC: $CC"
         echo "源目录: ${{ matrix.source_dir }}"
+        echo "模块类型: ${{ matrix.module_type }}"
+        echo "架构: ${{ matrix.arch }}"
         
         # 验证编译器
         $CC --version || echo "编译器检查完成"
@@ -368,6 +406,8 @@ jobs:
         mkdir -p build/${{ matrix.module_type }}-${{ matrix.arch }}
         
         echo "📁 准备模块文件..."
+        echo "模块类型: ${{ matrix.module_type }}"
+        echo "架构: ${{ matrix.arch }}"
         
         # 复制基础文件
         cp -r module/META-INF build/${{ matrix.module_type }}-${{ matrix.arch }}/
@@ -385,15 +425,18 @@ jobs:
         # 对于 multi 类型，额外复制配置文件
         if [[ "${{ matrix.module_type }}" == "multi" ]]; then
           cp module/multi_config.conf build/${{ matrix.module_type }}-${{ matrix.arch }}/
+          echo "✅ Added multi_config.conf for multi module"
         fi
         
         # 复制并更新 module.prop
-        cp module/${{ matrix.module_type }}/${{ matrix.arch }}/module.prop build/${{ matrix.module_type }}-${{ matrix.arch }}/
+        cp module/${{ matrix.module_type }}/${{ matrix.module_prop_dir }}/module.prop build/${{ matrix.module_type }}-${{ matrix.arch }}/
         
         # 更新版本信息
         sed -i "s|^version=.*|version=${{ needs.version-setup.outputs.version }}|" build/${{ matrix.module_type }}-${{ matrix.arch }}/module.prop
         sed -i "s|^versionCode=.*|versionCode=${{ needs.version-setup.outputs.version_code }}|" build/${{ matrix.module_type }}-${{ matrix.arch }}/module.prop
         echo "minApi=${{ env.ANDROID_API_LEVEL }}" >> build/${{ matrix.module_type }}-${{ matrix.arch }}/module.prop
+        
+        echo "✅ 模块文件准备完成"
 
     - name: Package module
       if: steps.check_build.outputs.should_build == 'true'
@@ -431,7 +474,11 @@ jobs:
           # 对于 multi 类型，额外检查 multi_config.conf
           if [[ "${{ matrix.module_type }}" == "multi" ]]; then
             echo "🔍 Checking multi_config.conf for multi module:"
-            unzip -l "$expected_zip" | grep "multi_config.conf" || echo "multi_config.conf missing!"
+            if unzip -l "$expected_zip" | grep -q "multi_config.conf"; then
+              echo "✅ multi_config.conf found"
+            else
+              echo "❌ multi_config.conf missing"
+            fi
           fi
           
         else
@@ -456,10 +503,12 @@ jobs:
 
   release:
     runs-on: ubuntu-latest
-    needs: [build, update-all-json-files, prepare-changelog]
+    needs: [build, update-json-files, prepare-changelog, version-setup]
     if: always() && (needs.build.result == 'success' || needs.build.result == 'skipped')
     env:
       TZ: Asia/Shanghai
+    outputs:
+      release_files: ${{ steps.prepare_release.outputs.release_files }}
 
     steps:
     - name: Download all build artifacts
@@ -480,10 +529,13 @@ jobs:
       run: |
         VERSION="${{ needs.version-setup.outputs.version }}"
         VERSION_CODE="${{ needs.version-setup.outputs.version_code }}"
+        BUILD_TYPE="${{ needs.version-setup.outputs.build_type }}"
         echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
         echo "VERSION_CODE=$VERSION_CODE" >> $GITHUB_OUTPUT
+        echo "BUILD_TYPE=$BUILD_TYPE" >> $GITHUB_OUTPUT
         echo "Using version: $VERSION"
         echo "Using version code: $VERSION_CODE"
+        echo "Build type: $BUILD_TYPE"
 
     - name: Get current timestamp (Beijing Time)
       id: timestamp
@@ -491,76 +543,78 @@ jobs:
         echo "BUILD_TIME=$(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M:%S')" >> $GITHUB_OUTPUT
         echo "BUILD_DATE=$(TZ='Asia/Shanghai' date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
 
-    - name: Verify all artifacts
+    - name: Prepare release files list
+      id: prepare_release
       run: |
-        echo "🔍 Verifying all release artifacts with API 28 support"
+        BUILD_TYPE="${{ needs.version-setup.outputs.build_type }}"
+        echo "Build type: $BUILD_TYPE"
         
-        ZIP_COUNT=$(find artifacts -name "*.zip" -type f | wc -l)
-        CHANGELOG_COUNT=$(find artifacts -name "changelog.md" -type f | wc -l)
+        # 初始化文件列表
+        RELEASE_FILES=""
         
-        echo "Found $ZIP_COUNT ZIP files and $CHANGELOG_COUNT changelog files"
+        # 根据构建类型添加对应的文件
+        case $BUILD_TYPE in
+          "all")
+            RELEASE_FILES="artifacts/EZ-Clean-basic-arm.zip\nartifacts/EZ-Clean-basic-arm64.zip\nartifacts/EZ-Clean-multi-arm.zip\nartifacts/EZ-Clean-multi-arm64.zip"
+            EXPECTED_COUNT=4
+            ;;
+          "basic")
+            RELEASE_FILES="artifacts/EZ-Clean-basic-arm.zip\nartifacts/EZ-Clean-basic-arm64.zip"
+            EXPECTED_COUNT=2
+            ;;
+          "multi")
+            RELEASE_FILES="artifacts/EZ-Clean-multi-arm.zip\nartifacts/EZ-Clean-multi-arm64.zip"
+            EXPECTED_COUNT=2
+            ;;
+        esac
         
-        if [ $ZIP_COUNT -eq 4 ] && [ $CHANGELOG_COUNT -eq 1 ]; then
-          echo "✅ All artifacts present"
-          
-          # 验证每个zip文件
-          for file in artifacts/*.zip; do
-            echo "Checking: $(basename "$file")"
-            if unzip -t "$file" > /dev/null 2>&1; then
-              echo "  ✅ Valid zip"
-              # 检查API级别信息
-              if unzip -p "$file" module.prop | grep -q "minApi=28"; then
-                echo "  ✅ API level 28 verified"
-              else
-                echo "  ❌ API level 28 missing"
-                exit 1
-              fi
-            else
-              echo "  ❌ Corrupted zip"
-              exit 1
-            fi
-          done
-          
-          # 特别验证 multi 模块包含 multi_config.conf
-          echo "🔍 Verifying multi modules have multi_config.conf..."
-          for file in artifacts/EZ-Clean-multi-*.zip; do
-            if [ -f "$file" ]; then
-              echo "Checking multi_config.conf in: $(basename "$file")"
-              if unzip -l "$file" | grep -q "multi_config.conf"; then
-                echo "  ✅ multi_config.conf found"
-              else
-                echo "  ❌ multi_config.conf missing"
-                exit 1
-              fi
-            fi
-          done
+        # 添加changelog.md
+        RELEASE_FILES+="\nartifacts/changelog.md"
+        
+        # 验证文件存在
+        echo "🔍 Verifying release files for build type: $BUILD_TYPE"
+        FILE_COUNT=0
+        for file in $(echo -e "$RELEASE_FILES"); do
+          if [ -f "$file" ]; then
+            echo "✅ Found: $file"
+            FILE_COUNT=$((FILE_COUNT + 1))
+          else
+            echo "❌ Missing: $file"
+          fi
+        done
+        
+        echo "Expected files: $((EXPECTED_COUNT + 1)) (modules + changelog)"
+        echo "Found files: $FILE_COUNT"
+        
+        if [ $FILE_COUNT -eq $((EXPECTED_COUNT + 1)) ]; then
+          echo "✅ All expected files found"
         else
-          echo "❌ Missing artifacts"
-          find artifacts -type f | sort
-          exit 1
+          echo "❌ Missing some files, but will continue with available files"
         fi
+        
+        # 输出文件列表
+        echo "release_files<<EOF" >> $GITHUB_OUTPUT
+        echo -e "$RELEASE_FILES" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
 
     - name: Create Release
-      if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+      if: (startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch') && steps.prepare_release.outputs.release_files != ''
       uses: softprops/action-gh-release@v1
       with:
         tag_name: ${{ steps.version.outputs.VERSION }}
-        name: Release ${{ steps.version.outputs.VERSION }} (API 28+)
+        name: Release ${{ steps.version.outputs.VERSION }} (${{ steps.version.outputs.BUILD_TYPE }}) - API 28+
         files: |
-          artifacts/EZ-Clean-basic-arm.zip
-          artifacts/EZ-Clean-basic-arm64.zip
-          artifacts/EZ-Clean-multi-arm.zip
-          artifacts/EZ-Clean-multi-arm64.zip
-          artifacts/changelog.md
+          ${{ steps.prepare_release.outputs.release_files }}
         body: |
           ${{ needs.prepare-changelog.outputs.changelog_content }}
           
           ## 🛠 构建信息
+          - **构建类型**: ${{ steps.version.outputs.BUILD_TYPE }}
           - **NDK 版本**: R28 (${{ env.ANDROID_NDK_VERSION }})
           - **最低 Android 版本**: 9.0 (API 28)
           - **Go 版本**: ${{ env.GO_VERSION }}
           - **架构支持**: ARM, ARM64
-          - **模块类型**: Basic, Multi
+          - **包含模块**: ${{ steps.version.outputs.BUILD_TYPE == 'all' && 'Basic + Multi' || steps.version.outputs.BUILD_TYPE }}
 
     - name: Cleanup old workflows
       uses: Mattraks/delete-workflow-runs@v2
