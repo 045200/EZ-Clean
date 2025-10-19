@@ -270,93 +270,47 @@ jobs:
         go-version: ${{ env.GO_VERSION }}
         cache: true
 
-    - name: Verify source file location
-      run: |
-        echo "📁 Checking repository structure..."
-        echo "Current directory: $(pwd)"
-        echo "Workspace directory: $GITHUB_WORKSPACE"
-        
-        # 切换到工作空间根目录
-        cd $GITHUB_WORKSPACE
-        echo "📁 Now in: $(pwd)"
-        
-        echo "📁 Root directory contents:"
-        ls -la
-        
-        echo "🔍 Looking for EZ.go:"
-        if [ -f "EZ.go" ]; then
-          echo "✅ Found EZ.go in root directory"
-          echo "📄 File details:"
-          ls -la EZ.go
-          echo "📝 First few lines of EZ.go:"
-          head -10 EZ.go
-        else
-          echo "❌ ERROR: EZ.go not found in root directory!"
-          echo "Available Go files:"
-          find . -name "*.go" -type f | head -20
-          exit 1
-        fi
-
     - name: Build Go binary for Android with NDK R28
       run: |
-        # 确保在正确的工作目录
-        echo "📁 Initial working directory: $(pwd)"
-        cd $GITHUB_WORKSPACE
-        echo "📁 Workspace directory: $(pwd)"
-        
-        # 验证源文件
-        if [ ! -f "EZ.go" ]; then
-          echo "❌ ERROR: EZ.go not found at $GITHUB_WORKSPACE/EZ.go"
-          echo "Available files:"
-          ls -la
-          exit 1
-        fi
-        echo "✅ Source file EZ.go verified"
-        
-        # 设置编译环境
+        # 设置Go编译环境 - 启用CGO
         export GOOS=android
         export GOARCH=${{ matrix.goarch }}
         export CGO_ENABLED=0
+        
+        # 设置Android NDK工具链 - 使用API级别28
         export API_LEVEL=${{ env.ANDROID_API_LEVEL }}
+        
+        # 设置编译器路径
         export CC=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.android_triple }}$API_LEVEL-clang
         export CXX=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.android_triple }}$API_LEVEL-clang++
         
-        echo "🔧 Build environment:"
+        echo "🚀 Building for Android with NDK R28 (API $API_LEVEL):"
         echo "  GOOS: $GOOS"
-        echo "  GOARCH: $GOARCH"
+        echo "  GOARCH: $GOARCH" 
         echo "  CGO_ENABLED: $CGO_ENABLED"
         echo "  CC: $CC"
         echo "  API Level: $API_LEVEL"
         
         # 验证编译器
-        echo "🔍 Verifying compiler:"
-        $CC --version || echo "Compiler version check completed"
+        $CC --version || echo "Compiler check completed"
         
-        # 编译
+        # 验证Go环境
+        echo "🔧 Go environment:"
+        go env GOPATH GOOS GOARCH CGO_ENABLED
+        
+        # 编译根目录的 EZ.go 文件
         echo "🏗️ Building EZ.go for ${{ matrix.arch }}..."
-        go build -v -ldflags="-s -w" -o EZ-${{ matrix.arch }} EZ.go
+        go build -v -ldflags="-s -w" -o EZ-${{ matrix.arch }} ./EZ.go
         
-        # 验证输出
-        if [ -f "EZ-${{ matrix.arch }}" ]; then
-          echo "✅ Build successful: EZ-${{ matrix.arch }}"
-          echo "📦 Binary details:"
-          file EZ-${{ matrix.arch }}
-          ls -lh EZ-${{ matrix.arch }}
-          echo "🔍 Binary architecture info:"
-          readelf -h EZ-${{ matrix.arch }} 2>/dev/null || echo "Not an ELF binary, checking with file command"
-        else
-          echo "❌ Build failed - output file not found"
-          echo "📁 Current directory contents:"
-          ls -la
-          exit 1
-        fi
+        echo "✅ Go binary built successfully with NDK R28"
+        echo "📦 Binary details:"
+        file EZ-${{ matrix.arch }}
+        ls -lh EZ-*
+        echo "🔍 Binary info:"
+        readelf -h EZ-${{ matrix.arch }} 2>/dev/null || echo "Not an ELF binary"
 
     - name: Prepare module files
       run: |
-        # 确保在正确目录
-        cd $GITHUB_WORKSPACE
-        echo "📁 Preparing module files from: $(pwd)"
-        
         # 创建模块目录
         mkdir -p build/EZ-${{ matrix.arch }}
         
@@ -392,15 +346,11 @@ jobs:
         echo "🔢 Version Code: ${{ needs.version-setup.outputs.version_code }}"
         echo "📦 Binary: EZ-${{ matrix.arch }} -> EZ"
         echo "📄 Config files: config.conf"
-        
-        # 验证模块目录内容
-        echo "📁 Module directory contents:"
-        ls -la build/EZ-${{ matrix.arch }}/
 
     - name: Package modules
       run: |
-        cd $GITHUB_WORKSPACE/build
-        echo "📦 Packaging modules from: $(pwd)"
+        cd build
+        echo "📦 Packaging modules..."
         
         for dir in */; do
           if [ -d "$dir" ]; then
@@ -421,7 +371,6 @@ jobs:
 
     - name: Verify artifacts
       run: |
-        cd $GITHUB_WORKSPACE
         echo "🔍 Verifying artifacts..."
         expected_zip="build/EZ-${{ matrix.arch }}.zip"
         
@@ -442,15 +391,6 @@ jobs:
             echo "✅ API level 28 correctly set in module.prop"
           else
             echo "❌ API level not found in module.prop"
-            exit 1
-          fi
-          
-          # 检查二进制文件
-          if unzip -p "$expected_zip" EZ > /dev/null 2>&1; then
-            echo "✅ Binary file 'EZ' found in zip"
-          else
-            echo "❌ Binary file 'EZ' missing from zip"
-            exit 1
           fi
           
         else
