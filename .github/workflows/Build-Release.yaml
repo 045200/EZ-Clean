@@ -15,14 +15,6 @@ on:
         required: true
         type: string
         default: '1'
-      build_type:
-        description: 'Build type'
-        required: true
-        type: choice
-        options:
-          - all
-          - basic
-          - multi
 
       # 自定义更新内容部分
       custom_title_1:
@@ -58,7 +50,7 @@ on:
         default: ''
 
 env:
-  GO_VERSION: '1.22'
+  GO_VERSION: '1.25'
   ANDROID_NDK_VERSION: 'r28b'
   ANDROID_API_LEVEL: '28'
 
@@ -201,7 +193,7 @@ jobs:
         path: changelog.md
         retention-days: 1
 
-  update-all-json-files:
+  update-json-files:
     runs-on: ubuntu-latest
     needs: [version-setup, prepare-changelog]
     permissions:
@@ -214,59 +206,43 @@ jobs:
         token: ${{ secrets.GITHUB_TOKEN }}
         fetch-depth: 0
 
-    - name: Update all JSON files with API 28 support
+    - name: Update JSON files with API 28 support
       run: |
-        echo "Updating all JSON files for version ${{ needs.version-setup.outputs.version }} with API 28"
+        echo "Updating JSON files for version ${{ needs.version-setup.outputs.version }} with API 28"
         
-        # 更新所有4个JSON文件，添加minApi字段
+        # 更新两个JSON文件，添加minApi字段
         jq -c --arg version "${{ needs.version-setup.outputs.version }}" \
            --arg versionCode "${{ needs.version-setup.outputs.version_code }}" \
            --arg minApi "${{ env.ANDROID_API_LEVEL }}" \
-           --arg zipUrl "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/EZ-Clean-basic-arm.zip" \
+           --arg zipUrl "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/EZ-Clean-arm.zip" \
            --arg changelog "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/changelog.md" \
            '.version = $version | .versionCode = ($versionCode | tonumber) | .minApi = ($minApi | tonumber) | .zipUrl = $zipUrl | .changelog = $changelog' \
-           basic/arm.json > temp1.json && mv temp1.json basic/arm.json
-        
-        jq -c --arg version "${{ needs.version-setup.outputs.version }}" \
-           --arg versionCode "${{ needs.version-setup.outputs.version_code }}" \
-           --arg minApi "${{ env.ANDROID_API_LEVEL }}" \
-           --arg zipUrl "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/EZ-Clean-basic-arm64.zip" \
-           --arg changelog "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/changelog.md" \
-           '.version = $version | .versionCode = ($versionCode | tonumber) | .minApi = ($minApi | tonumber) | .zipUrl = $zipUrl | .changelog = $changelog' \
-           basic/arm64.json > temp2.json && mv temp2.json basic/arm64.json
+           EZ/arm.json > temp1.json && mv temp1.json EZ/arm.json
         
         jq -c --arg version "${{ needs.version-setup.outputs.version }}" \
            --arg versionCode "${{ needs.version-setup.outputs.version_code }}" \
            --arg minApi "${{ env.ANDROID_API_LEVEL }}" \
-           --arg zipUrl "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/EZ-Clean-multi-arm.zip" \
+           --arg zipUrl "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/EZ-Clean-arm64.zip" \
            --arg changelog "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/changelog.md" \
            '.version = $version | .versionCode = ($versionCode | tonumber) | .minApi = ($minApi | tonumber) | .zipUrl = $zipUrl | .changelog = $changelog' \
-           multi/arm.json > temp3.json && mv temp3.json multi/arm.json
+           EZ/arm64.json > temp2.json && mv temp2.json EZ/arm64.json
         
-        jq -c --arg version "${{ needs.version-setup.outputs.version }}" \
-           --arg versionCode "${{ needs.version-setup.outputs.version_code }}" \
-           --arg minApi "${{ env.ANDROID_API_LEVEL }}" \
-           --arg zipUrl "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/EZ-Clean-multi-arm64.zip" \
-           --arg changelog "https://github.com/${{ github.repository }}/releases/download/${{ needs.version-setup.outputs.version }}/changelog.md" \
-           '.version = $version | .versionCode = ($versionCode | tonumber) | .minApi = ($minApi | tonumber) | .zipUrl = $zipUrl | .changelog = $changelog' \
-           multi/arm64.json > temp4.json && mv temp4.json multi/arm64.json
-        
-        echo "All JSON files updated successfully with API 28 support"
+        echo "JSON files updated successfully with API 28 support"
 
-    - name: Commit and push all JSON files
+    - name: Commit and push JSON files
       run: |
         git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
         git config --local user.name "github-actions[bot]"
         
-        git add basic/arm.json basic/arm64.json multi/arm.json multi/arm64.json
+        git add EZ/arm.json EZ/arm64.json
         
         if git diff --staged --quiet; then
           echo "No changes to commit"
         else
-          git commit -m "ci: update all JSON files for version ${{ needs.version-setup.outputs.version }} with API 28 support"
+          git commit -m "ci: update JSON files for version ${{ needs.version-setup.outputs.version }} with API 28 support"
           git pull --rebase origin main
           git push origin main
-          echo "Successfully updated all JSON files with API 28 support"
+          echo "Successfully updated JSON files with API 28 support"
         fi
 
   build:
@@ -277,27 +253,9 @@ jobs:
         include:
           - arch: arm64
             goarch: arm64
-            module_type: basic
-            source_dir: basic
-            module_prop_dir: arm64
             android_triple: aarch64-linux-android
           - arch: arm
             goarch: arm
-            module_type: basic
-            source_dir: basic
-            module_prop_dir: arm
-            android_triple: armv7a-linux-androideabi
-          - arch: arm64
-            goarch: arm64
-            module_type: multi
-            source_dir: multi
-            module_prop_dir: arm64
-            android_triple: aarch64-linux-android
-          - arch: arm
-            goarch: arm
-            module_type: multi
-            source_dir: multi
-            module_prop_dir: arm
             android_triple: armv7a-linux-androideabi
 
     steps:
@@ -312,29 +270,12 @@ jobs:
         go-version: ${{ env.GO_VERSION }}
         cache: true
 
-    - name: Check build condition
-      id: check_build
-      run: |
-        if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-          if [[ "${{ github.event.inputs.build_type }}" == "all" || "${{ github.event.inputs.build_type }}" == "${{ matrix.module_type }}" ]]; then
-            echo "should_build=true" >> $GITHUB_OUTPUT
-          else
-            echo "should_build=false" >> $GITHUB_OUTPUT
-          fi
-        else
-          echo "should_build=true" >> $GITHUB_OUTPUT
-        fi
-
     - name: Initialize and verify Go modules with dependency resolution
-      if: steps.check_build.outputs.should_build == 'true'
       run: |
         echo "📦 Setting up Go modules with comprehensive dependency resolution..."
         
-        # 切换到 source 目录
-        cd source
-        
         # 显示当前目录结构用于调试
-        echo "📁 Current source directory structure:"
+        echo "📁 Current directory structure:"
         find . -name "*.go" -type f | head -20 || echo "No Go files found"
         echo "---"
         ls -la
@@ -357,11 +298,11 @@ jobs:
           # 如果模块路径不正确，重新初始化
           if [[ "$CURRENT_MODULE" != *"ez-clean"* ]]; then
             echo "⚠️ Module path may be incorrect, reinitializing..."
-            go mod init github.com/${{ github.repository }}/source 2>/dev/null || go mod init ez-clean/source
+            go mod init github.com/${{ github.repository }} 2>/dev/null || go mod init ez-clean
           fi
         else
           echo "Creating new go.mod file..."
-          go mod init github.com/${{ github.repository }}/source 2>/dev/null || go mod init ez-clean/source
+          go mod init github.com/${{ github.repository }} 2>/dev/null || go mod init ez-clean
         fi
         
         # 显示模块信息
@@ -395,7 +336,6 @@ jobs:
         echo "✅ Go module setup completed with comprehensive verification"
 
     - name: Build Go binary for Android with NDK R28
-      if: steps.check_build.outputs.should_build == 'true'
       run: |
         # 设置Go编译环境 - 启用CGO
         export GOOS=android
@@ -416,7 +356,6 @@ jobs:
         echo "  CGO_ENABLED: $CGO_ENABLED"
         echo "  CC: $CC"
         echo "  API Level: $API_LEVEL"
-        echo "  Build Directory: source/"
         echo "  GOPROXY: $GOPROXY"
         
         # 验证编译器
@@ -426,78 +365,56 @@ jobs:
         echo "🔧 Go environment:"
         go env GOPATH GOOS GOARCH CGO_ENABLED
         
-        # 编译Go二进制文件 - 直接编译特定的Go文件
-        cd source
-        echo "🏗️ Building Go binary for ${{ matrix.module_type }}..."
-        
-        # 根据模块类型选择要构建的特定Go文件
-        if [[ "${{ matrix.module_type }}" == "basic" ]]; then
-          echo "📄 Compiling basic.go..."
-          go build -v -ldflags="-s -w" -o ../EZ-basic basic.go
-        elif [[ "${{ matrix.module_type }}" == "multi" ]]; then
-          echo "📄 Compiling multi.go..."
-          go build -v -ldflags="-s -w" -o ../EZ-multi multi.go
-        fi
-        
-        cd ..
+        # 编译根目录的 EZ.go 文件
+        echo "🏗️ Building EZ.go for ${{ matrix.arch }}..."
+        go build -v -ldflags="-s -w" -o EZ-${{ matrix.arch }} EZ.go
         
         echo "✅ Go binary built successfully with NDK R28"
         echo "📦 Binary details:"
-        file EZ-${{ matrix.module_type }}
+        file EZ-${{ matrix.arch }}
         ls -lh EZ-*
         echo "🔍 Binary info:"
-        readelf -h EZ-${{ matrix.module_type }} 2>/dev/null || echo "Not an ELF binary"
+        readelf -h EZ-${{ matrix.arch }} 2>/dev/null || echo "Not an ELF binary"
 
     - name: Prepare module files
-      if: steps.check_build.outputs.should_build == 'true'
       run: |
         # 创建模块目录
-        mkdir -p build/${{ matrix.module_type }}-${{ matrix.arch }}
+        mkdir -p build/EZ-${{ matrix.arch }}
         
-        echo "📁 Preparing module files for ${{ matrix.module_type }}-${{ matrix.arch }}"
+        echo "📁 Preparing module files for EZ-${{ matrix.arch }}"
         
         # 复制基础模块文件
-        cp -r module/META-INF build/${{ matrix.module_type }}-${{ matrix.arch }}/
-        cp module/whitelist.conf build/${{ matrix.module_type }}-${{ matrix.arch }}/
-        cp module/blacklist.conf build/${{ matrix.module_type }}-${{ matrix.arch }}/
-        cp module/App.conf build/${{ matrix.module_type }}-${{ matrix.arch }}/
-        cp module/service.sh build/${{ matrix.module_type }}-${{ matrix.arch }}/
-        cp module/customize.sh build/${{ matrix.module_type }}-${{ matrix.arch }}/
-        cp module/reload.sh build/${{ matrix.module_type }}-${{ matrix.arch }}/
+        cp -r EZ/META-INF build/EZ-${{ matrix.arch }}/
+        cp EZ/whitelist.conf build/EZ-${{ matrix.arch }}/
+        cp EZ/blacklist.conf build/EZ-${{ matrix.arch }}/
+        cp EZ/App.conf build/EZ-${{ matrix.arch }}/
+        cp EZ/service.sh build/EZ-${{ matrix.arch }}/
+        cp EZ/customize.sh build/EZ-${{ matrix.arch }}/
+        cp EZ/reload.sh build/EZ-${{ matrix.arch }}/
         
-        # 复制二进制文件 - 使用版本特定名称
-        cp EZ-${{ matrix.module_type }} build/${{ matrix.module_type }}-${{ matrix.arch }}/EZ
+        # 复制二进制文件
+        cp EZ-${{ matrix.arch }} build/EZ-${{ matrix.arch }}/EZ
         
-        # 复制共享的 config.conf 文件
-        cp module/config.conf build/${{ matrix.module_type }}-${{ matrix.arch }}/
-        
-        # 对于 multi 类型，额外复制 multi_config.conf
-        if [[ "${{ matrix.module_type }}" == "multi" ]]; then
-          echo "📄 Copying multi_config.conf for multi module"
-          cp module/multi_config.conf build/${{ matrix.module_type }}-${{ matrix.arch }}/
-        fi
+        # 复制配置文件
+        cp EZ/config.conf build/EZ-${{ matrix.arch }}/
         
         # 复制并更新module.prop文件
-        cp module/${{ matrix.module_type }}/${{ matrix.module_prop_dir }}/module.prop build/${{ matrix.module_type }}-${{ matrix.arch }}/
+        cp EZ/${{ matrix.arch }}/module.prop build/EZ-${{ matrix.arch }}/
         
         # 更新版本信息
-        sed -i "s|^version=.*|version=${{ needs.version-setup.outputs.version }}|" build/${{ matrix.module_type }}-${{ matrix.arch }}/module.prop
-        sed -i "s|^versionCode=.*|versionCode=${{ needs.version-setup.outputs.version_code }}|" build/${{ matrix.module_type }}-${{ matrix.arch }}/module.prop
+        sed -i "s|^version=.*|version=${{ needs.version-setup.outputs.version }}|" build/EZ-${{ matrix.arch }}/module.prop
+        sed -i "s|^versionCode=.*|versionCode=${{ needs.version-setup.outputs.version_code }}|" build/EZ-${{ matrix.arch }}/module.prop
         
         # 添加API级别信息到模块属性
-        echo "minApi=${{ env.ANDROID_API_LEVEL }}" >> build/${{ matrix.module_type }}-${{ matrix.arch }}/module.prop
+        echo "minApi=${{ env.ANDROID_API_LEVEL }}" >> build/EZ-${{ matrix.arch }}/module.prop
         
         echo "✅ Module files prepared with API level ${{ env.ANDROID_API_LEVEL }}"
         echo "📝 Version: ${{ needs.version-setup.outputs.version }}"
         echo "🔢 Version Code: ${{ needs.version-setup.outputs.version_code }}"
-        echo "📦 Binary: EZ-${{ matrix.module_type }} -> EZ"
-        echo "📄 Config files: config.conf" 
-        if [[ "${{ matrix.module_type }}" == "multi" ]]; then
-          echo "📄 Additional config: multi_config.conf"
-        fi
+        echo "📦 Binary: EZ-${{ matrix.arch }} -> EZ"
+        echo "📄 Config files: config.conf"
 
     - name: Package modules
-      if: steps.check_build.outputs.should_build == 'true'
       run: |
         cd build
         echo "📦 Packaging modules..."
@@ -505,7 +422,7 @@ jobs:
         for dir in */; do
           if [ -d "$dir" ]; then
             dir_name=$(basename "${dir%/}")
-            zip_name="EZ-Clean-${dir_name}.zip"
+            zip_name="$dir_name.zip"
             
             echo "Creating: $zip_name"
             cd "$dir_name"
@@ -520,10 +437,9 @@ jobs:
         ls -la *.zip
 
     - name: Verify artifacts
-      if: steps.check_build.outputs.should_build == 'true'
       run: |
         echo "🔍 Verifying artifacts..."
-        expected_zip="build/EZ-Clean-${{ matrix.module_type }}-${{ matrix.arch }}.zip"
+        expected_zip="build/EZ-${{ matrix.arch }}.zip"
         
         if [ -f "$expected_zip" ]; then
           echo "✅ Found: $expected_zip"
@@ -544,12 +460,6 @@ jobs:
             echo "❌ API level not found in module.prop"
           fi
           
-          # 对于 multi 类型，额外检查 multi_config.conf
-          if [[ "${{ matrix.module_type }}" == "multi" ]]; then
-            echo "🔍 Checking multi_config.conf for multi module:"
-            unzip -l "$expected_zip" | grep "multi_config.conf" || echo "multi_config.conf missing!"
-          fi
-          
         else
           echo "❌ Missing: $expected_zip"
           ls -la build/
@@ -558,10 +468,9 @@ jobs:
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
-      if: steps.check_build.outputs.should_build == 'true'
       with:
-        name: EZ-Clean-${{ matrix.module_type }}-${{ matrix.arch }}-api28
-        path: build/EZ-Clean-${{ matrix.module_type }}-${{ matrix.arch }}.zip
+        name: EZ-${{ matrix.arch }}-api28
+        path: build/EZ-${{ matrix.arch }}.zip
         retention-days: 1
         if-no-files-found: error
 
@@ -573,7 +482,7 @@ jobs:
 
   release:
     runs-on: ubuntu-latest
-    needs: [build, update-all-json-files, prepare-changelog]
+    needs: [build, update-json-files, prepare-changelog]
     if: always() && (needs.build.result == 'success' || needs.build.result == 'skipped')
     env:
       TZ: Asia/Shanghai
@@ -583,7 +492,7 @@ jobs:
       uses: actions/download-artifact@v4
       with:
         path: artifacts
-        pattern: EZ-Clean-*
+        pattern: EZ-*
         merge-multiple: true
 
     - name: Download changelog artifact
@@ -617,7 +526,7 @@ jobs:
         
         echo "Found $ZIP_COUNT ZIP files and $CHANGELOG_COUNT changelog files"
         
-        if [ $ZIP_COUNT -eq 4 ] && [ $CHANGELOG_COUNT -eq 1 ]; then
+        if [ $ZIP_COUNT -eq 2 ] && [ $CHANGELOG_COUNT -eq 1 ]; then
           echo "✅ All artifacts present"
           
           # 验证每个zip文件
@@ -637,20 +546,6 @@ jobs:
               exit 1
             fi
           done
-          
-          # 特别验证 multi 模块包含 multi_config.conf
-          echo "🔍 Verifying multi modules have multi_config.conf..."
-          for file in artifacts/EZ-Clean-multi-*.zip; do
-            if [ -f "$file" ]; then
-              echo "Checking multi_config.conf in: $(basename "$file")"
-              if unzip -l "$file" | grep -q "multi_config.conf"; then
-                echo "  ✅ multi_config.conf found"
-              else
-                echo "  ❌ multi_config.conf missing"
-                exit 1
-              fi
-            fi
-          done
         else
           echo "❌ Missing artifacts"
           find artifacts -type f | sort
@@ -664,10 +559,8 @@ jobs:
         tag_name: ${{ steps.version.outputs.VERSION }}
         name: Release ${{ steps.version.outputs.VERSION }} (API 28+)
         files: |
-          artifacts/EZ-Clean-basic-arm.zip
-          artifacts/EZ-Clean-basic-arm64.zip
-          artifacts/EZ-Clean-multi-arm.zip
-          artifacts/EZ-Clean-multi-arm64.zip
+          artifacts/EZ-arm.zip
+          artifacts/EZ-arm64.zip
           artifacts/changelog.md
         body: |
           ${{ needs.prepare-changelog.outputs.changelog_content }}
@@ -677,7 +570,6 @@ jobs:
           - **最低 Android 版本**: 9.0 (API 28)
           - **Go 版本**: ${{ env.GO_VERSION }}
           - **架构支持**: ARM, ARM64
-          - **模块类型**: Basic, Multi
 
     - name: Cleanup old workflows
       uses: Mattraks/delete-workflow-runs@v2

@@ -1,8 +1,0 @@
-id=EZ-Clean
-name=EZ Clean (Multi)
-version=v1.0.0
-versionCode=1
-author=EZ-Team
-description=Multi cleaning functionality with system perception
-support=https://github.com/045200
-updateJson=https://raw.githubusercontent.com/045200/EZ-Clean/main/multi/arm64.json
